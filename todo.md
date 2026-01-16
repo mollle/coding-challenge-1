@@ -7,3 +7,19 @@ npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memo
 
 nochmal checekn was als prod ready heißt und best practices sind
 insert duration sichergehen das es 0.XXXXXX format ist
+
+sciehrgeehen das
+duration of the calculation in seconds und nicht noch mehr/weniger zeit ind er berechnung ist
+
+table name executions stimmt?
+
+Think about structure, readability, maintainability, performance, re-usability
+and test-ability of the code. Like the solution is going to be deployed into the
+production environment. You should be proud of what you deliver
+
+wie gehe ich mit worst case um, das roboter alle felder cleaned aber mit einzelnen schritten, das wäre dann riesige json und rieseiges set
+
+id für db entry
+n klassischen relationalen Systemen und vielen Microservices mit Postgres:
+
+- BIGINT IDENTITY / BIGSERIAL ist der Standard.
