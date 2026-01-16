@@ -1,5 +1,5 @@
 keine "elaborate valiadtion", aber ein bisschen wahrsch schon gut
-500 mit feedback das z.b. db down? was ist üblich in prod
+500 mit feedback das z.b. db down? was ist üblich in prod. da nur roboter sachen dahinsteckt spricht das eher fpr wenig verbose
 logging mit pino
 id generierung in db, hash, uuid, auto increment?
 beim ausführen von npm ci: 
@@ -23,3 +23,5 @@ id für db entry
 n klassischen relationalen Systemen und vielen Microservices mit Postgres:
 
 - BIGINT IDENTITY / BIGSERIAL ist der Standard.
+
+interview prep lesen
