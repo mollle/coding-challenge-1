@@ -2,15 +2,22 @@ import { Pool } from "pg";
 import { ExecutionRecord } from "../domain/types";
 
 export type CreateExecution = {
+  /** Number of command elements processed (commands.length). */
   commands: number;
+  /** Number of unique vertices cleaned. */
   result: number;
+  /** Domain computation duration in seconds (fractional). */
   duration: number;
 };
 
 export type ExecutionsRepo = {
+  /** Inserts an execution row and returns the created record. */
   insert: (data: CreateExecution) => Promise<ExecutionRecord>;
 };
 
+/**
+ * Postgres-backed repository for the `executions` table.
+ */
 export function createExecutionsRepo(pool: Pool): ExecutionsRepo {
   return {
     insert: async (data) => {

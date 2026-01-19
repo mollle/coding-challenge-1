@@ -5,6 +5,10 @@ import { createExecutionsRepo } from "./infrastructure/executionsRepo";
 import { createEnterPathService } from "./application/enterPathService";
 import { createApp } from "./app";
 
+/**
+ * Service entrypoint: loads env, wires dependencies, starts HTTP server.
+ * Handles SIGINT/SIGTERM for a best-effort graceful shutdown (closes DB pool).
+ */
 async function main(): Promise<void> {
   const env = loadEnv();
   const logger = createLogger(env);

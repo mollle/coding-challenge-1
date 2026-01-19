@@ -3,9 +3,19 @@ import { EnterPathRequestBody, ExecutionRecord } from "../domain/types";
 import { ExecutionsRepo } from "../infrastructure/executionsRepo";
 
 export type EnterPathService = {
+  /**
+   * Executes a full "enter-path" request.
+   *
+   * - Computes the path result using pure domain logic.
+   * - Measures computation duration in seconds (fractional) using a monotonic clock.
+   * - Persists the result and returns the created execution record.
+   */
   execute: (body: EnterPathRequestBody) => Promise<ExecutionRecord>;
 };
 
+/**
+ * Creates the application-layer service orchestrating timing + domain logic + persistence.
+ */
 export function createEnterPathService(repo: ExecutionsRepo): EnterPathService {
   return {
     execute: async (body) => {
