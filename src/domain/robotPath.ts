@@ -4,8 +4,6 @@ import { Command, Start } from "./types";
 /**
  * Counts the number of unique vertices cleaned by the robot.
  * Robot cleans every vertex it touches, including the start.
- *
- * Pure function: no shared state between calls.
  */
 export function countUniqueCleaned(start: Start, commands: Command[]): number {
   let x = start.x;

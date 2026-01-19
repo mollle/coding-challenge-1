@@ -30,7 +30,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  // Avoid console.*: create a minimal pino logger at default level.
   const logger = createLogger({ logLevel: "error" });
   const message = err instanceof Error ? err.message : "Unknown error";
   const stack = err instanceof Error ? err.stack : undefined;
