@@ -1,4 +1,4 @@
-import { countUniqueCleaned } from "../../src/domain/robotPath";
+import { countUniqueCleaned, decodePosition } from "../../src/domain/robotPath";
 import { Command } from "../../src/domain/types";
 
 describe("countUniqueCleaned", () => {
@@ -52,5 +52,52 @@ describe("countUniqueCleaned", () => {
     }));
 
     expect(countUniqueCleaned({ x: 0, y: 0 }, commands)).toBe(10_001);
+  });
+
+  describe("boundary coordinates (±100_000)", () => {
+    it("handles start at max positive coordinates", () => {
+      expect(countUniqueCleaned({ x: 100_000, y: 100_000 }, [])).toBe(1);
+    });
+
+    it("handles start at max negative coordinates", () => {
+      expect(countUniqueCleaned({ x: -100_000, y: -100_000 }, [])).toBe(1);
+    });
+
+    it("handles start at mixed extreme coordinates", () => {
+      expect(countUniqueCleaned({ x: -100_000, y: 100_000 }, [])).toBe(1);
+      expect(countUniqueCleaned({ x: 100_000, y: -100_000 }, [])).toBe(1);
+    });
+
+    it("handles movement near max positive boundary", () => {
+      const commands: Command[] = [{ direction: "west", steps: 2 }];
+      expect(countUniqueCleaned({ x: 100_000, y: 100_000 }, commands)).toBe(3);
+    });
+
+    it("handles movement near max negative boundary", () => {
+      const commands: Command[] = [{ direction: "east", steps: 2 }];
+      expect(countUniqueCleaned({ x: -100_000, y: -100_000 }, commands)).toBe(3);
+    });
+  });
+});
+
+describe("decodePosition", () => {
+  it("decodes origin correctly", () => {
+    const encoded = (0 + 100_000) * 200_001 + (0 + 100_000);
+    expect(decodePosition(encoded)).toEqual({ x: 0, y: 0 });
+  });
+
+  it("decodes max positive coordinates correctly", () => {
+    const encoded = (100_000 + 100_000) * 200_001 + (100_000 + 100_000);
+    expect(decodePosition(encoded)).toEqual({ x: 100_000, y: 100_000 });
+  });
+
+  it("decodes max negative coordinates correctly", () => {
+    const encoded = (-100_000 + 100_000) * 200_001 + (-100_000 + 100_000);
+    expect(decodePosition(encoded)).toEqual({ x: -100_000, y: -100_000 });
+  });
+
+  it("decodes mixed extreme coordinates correctly", () => {
+    const encoded = (100_000 + 100_000) * 200_001 + (-100_000 + 100_000);
+    expect(decodePosition(encoded)).toEqual({ x: -100_000, y: 100_000 });
   });
 });

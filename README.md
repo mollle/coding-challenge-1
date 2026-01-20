@@ -63,8 +63,38 @@ Semantics: the robot cleans the start vertex and every intermediate vertex along
 ## Assumptions
 
 - Input is syntactically well-formed (directions are valid, numbers are within reasonable bounds).
+- Coordinates are in range `[-100_000, 100_000]` per axis.
 - The robot is never instructed to move outside the office bounds.
 - The service performs only minimal request validation and relies on the caller to provide valid data.
+- Typical office scenarios are assumed; adversarial inputs designed to maximize unique positions (up to ~1 billion) would exceed available memory.
+
+## Implementation Limits
+
+This implementation uses a `Set<number>` to track visited positions. Each coordinate
+pair is encoded as a single number for memory efficiency.
+
+### Memory Constraints (512 MB container)
+
+| Component | Estimated Usage |
+|-----------|-----------------|
+| Docker + Node.js + App | ~100-150 MB |
+| Available for tracking | ~350-400 MB |
+| **Max unique positions** | **~7-8 million** |
+
+### Real-World Scale (1 field = 1 cm²)
+
+| Metric | Value |
+|--------|-------|
+| Max cleanable area | ~700-800 m² |
+| Equivalent | Large apartment / small house |
+
+### Worst-Case Input
+
+The theoretical maximum (10,000 commands × 99,999 steps = ~1 billion positions)
+would require ~40 GB RAM. This implementation handles typical office scenarios
+but will run out of memory on adversarial inputs designed to maximize unique positions.
+
+For production use with extreme inputs, a segment-based algorithm would be needed.
 
 ## Operations
 

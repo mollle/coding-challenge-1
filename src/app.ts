@@ -9,7 +9,7 @@ export function createApp(deps: {
   enterPathService: EnterPathService;
 }): Express {
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "500kb" }));
 
   registerRoutes(app, deps.enterPathService);
 

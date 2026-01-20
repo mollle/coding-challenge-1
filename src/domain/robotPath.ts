@@ -2,6 +2,32 @@ import { directionToVector } from "./direction";
 import { Command, Start } from "./types";
 
 /**
+ * Coordinate encoding constants.
+ * Coordinates are in range [-100_000, 100_000] per task spec.
+ * Using numeric keys instead of strings reduces memory ~4x and improves hash performance.
+ */
+const OFFSET = 100_000;
+const MULTIPLIER = 2 * OFFSET + 1; // 200_001 — ensures no collision between (x1,y1) and (x2,y2)
+
+/**
+ * Encodes (x, y) into a unique integer for use as a Set key.
+ * Formula: (y + OFFSET) * MULTIPLIER + (x + OFFSET)
+ * Max value: 200_000 * 200_001 + 200_000 = 40_000_400_000 (safe integer)
+ */
+function encodePosition(x: number, y: number): number {
+  return (y + OFFSET) * MULTIPLIER + (x + OFFSET);
+}
+
+/**
+ * Decodes an encoded position back to (x, y). Useful for debugging.
+ */
+export function decodePosition(encoded: number): { x: number; y: number } {
+  const yOffset = Math.floor(encoded / MULTIPLIER);
+  const xOffset = encoded % MULTIPLIER;
+  return { x: xOffset - OFFSET, y: yOffset - OFFSET };
+}
+
+/**
  * Counts the number of unique grid vertices cleaned by the robot.
  *
  * Semantics (per task specification):
@@ -14,8 +40,8 @@ export function countUniqueCleaned(start: Start, commands: Command[]): number {
   let x = start.x;
   let y = start.y;
 
-  const visited = new Set<string>();
-  visited.add(`${x},${y}`);
+  const visited = new Set<number>();
+  visited.add(encodePosition(x, y));
 
   for (const command of commands) {
     const { dx, dy } = directionToVector(command.direction);
@@ -23,7 +49,7 @@ export function countUniqueCleaned(start: Start, commands: Command[]): number {
     for (let i = 0; i < command.steps; i += 1) {
       x += dx;
       y += dy;
-      visited.add(`${x},${y}`);
+      visited.add(encodePosition(x, y));
     }
   }
 
