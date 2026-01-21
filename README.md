@@ -28,12 +28,15 @@ Before starting, ensure you have installed:
 
 ### Port Requirements
 
-- **5432**: PostgreSQL database
-- **5000**: Application HTTP server
+- **5000**: Application HTTP server (required)
+- **5432**: PostgreSQL database (**published for local testing/inspection**)
 
 If ports are in use, change the host mappings in [docker-compose.yml](docker-compose.yml).
+ 
 
 ## Quick start (Docker)
+
+This repository includes a committed [.env](.env) with non-secret defaults so `docker compose up` works on a fresh machine without any preconfigured secrets.
 
 Running `docker compose up` will:
 
@@ -90,11 +93,11 @@ Response example (created execution):
 
 ```json
 {
-	"id": 1,
-	"timestamp": "2026-01-19T12:34:56.789Z",
-	"commands": 2,
-	"result": 4,
-	"duration": 0.000123
+  "id": 1,
+  "timestamp": "2026-01-19T12:34:56.789Z",
+  "commands": 2,
+  "result": 4,
+  "duration": 0.000123
 }
 ```
 
@@ -122,19 +125,19 @@ docker compose down -v
 - Check container status: `docker compose ps`
 - Follow logs: `docker compose logs -f postgres` and `docker compose logs -f app`
 - Postgres not healthy: inspect `docker compose logs postgres` for init errors; a fresh start can help: `docker compose down -v` then `docker compose up --build`
-- Request fails with `503 Service Unavailable`: the app could not reach Postgres (verify DB container is healthy and credentials in `docker-compose.yml`)
+- Request fails with `503 Service Unavailable`: the app could not reach Postgres (verify DB container is healthy and credentials in `.env` / container environment)
 
 ## API
 
 OpenAPI specification: see [openapi.yaml](openapi.yaml)
 
 - `GET /health`
-	- Health check endpoint
-	- Response: `{ "status": "ok" }`
+  - Health check endpoint
+  - Response: `{ "status": "ok" }`
 
 - `POST /tibber-developer-test/enter-path`
-	- Request body: `{ start: { x: number, y: number }, commands: Array<{ direction: "north"|"east"|"south"|"west", steps: number }> }`
-	- Response: created execution record (see example above)
+  - Request body: `{ start: { x: number, y: number }, commands: Array<{ direction: "north"|"east"|"south"|"west", steps: number }> }`
+  - Response: created execution record (see example above)
 
 Semantics: the robot cleans the start vertex and every intermediate vertex along each step (not only the stop points).
 
@@ -192,6 +195,8 @@ Database connection is configured via environment variables:
 - `DB_USER` (default: `postgres`)
 - `DB_PASSWORD` (default: `postgres`)
 - `LOG_LEVEL` (default: `info`)
+
+When running with Docker Compose, the app is configured to connect to Postgres via the service name `postgres` (internal Docker network). When running without Docker, `DB_HOST=localhost` is the typical default.
 
 ## Observability
 

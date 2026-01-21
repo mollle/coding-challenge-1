@@ -5,7 +5,6 @@ import { ValidationError } from "./errorHandler";
 
 /**
  * Minimal guard: checks basic shape + primitive types.
- * Per task spec, inputs are assumed well-formed, so no elaborate validation (no range checks).
  */
 function validateRequestBody(body: unknown): EnterPathRequestBody {
   const isRecord = (value: unknown): value is Record<string, unknown> =>

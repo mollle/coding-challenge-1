@@ -31,9 +31,8 @@ export function decodePosition(encoded: number): { x: number; y: number } {
  * Counts the number of unique grid vertices cleaned by the robot.
  *
  * Uses a Set<number> with integer-encoded positions for memory efficiency
- * (~4x less memory than string keys).
  *
- * Semantics (per task specification):
+ * Semantics:
  * - The robot cleans the start vertex.
  * - The robot cleans every intermediate vertex along each step (not only stop points).
  * - Uniqueness is by coordinate pair (x,y) on the integer grid.

@@ -23,10 +23,13 @@ export function loadEnv(): Env {
     throw new Error(`Invalid DB_PORT: "${process.env.DB_PORT}" is not a number`);
   }
 
-  const logLevel = (process.env.LOG_LEVEL ?? "info") as Env["logLevel"];
-  if (!VALID_LOG_LEVELS.includes(logLevel)) {
-    throw new Error(`Invalid LOG_LEVEL: "${process.env.LOG_LEVEL}" must be one of: ${VALID_LOG_LEVELS.join(", ")}`);
+  const rawLogLevel = process.env.LOG_LEVEL ?? "info";
+  if (!VALID_LOG_LEVELS.includes(rawLogLevel as Env["logLevel"])) {
+    throw new Error(
+      `Invalid LOG_LEVEL: "${process.env.LOG_LEVEL}" must be one of: ${VALID_LOG_LEVELS.join(", ")}`
+    );
   }
+  const logLevel = rawLogLevel as Env["logLevel"];
 
   return {
     port,

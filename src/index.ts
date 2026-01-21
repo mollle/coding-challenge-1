@@ -23,17 +23,55 @@ async function main(): Promise<void> {
     logger.info({ msg: "server listening", port: env.port });
   });
 
-  const shutdown = async () => {
-    logger.info({ msg: "shutdown requested" });
-    server.close(() => {
-      logger.info({ msg: "http server closed" });
+  const closeHttpServer = async (): Promise<void> => {
+    await new Promise<void>((resolve) => {
+      let closeError: unknown | undefined;
+      const onError = (err: unknown) => {
+        closeError = err;
+      };
+
+      server.once("error", onError);
+
+      try {
+        server.close(() => {
+          server.off("error", onError);
+          if (closeError !== undefined) {
+            logger.error({ msg: "http server close error", err: closeError });
+          }
+          resolve();
+        });
+      } catch (err) {
+        server.off("error", onError);
+        logger.error({ msg: "http server close error", err });
+        resolve();
+      }
     });
-    await db.close();
+  };
+
+  let isShuttingDown = false;
+  const shutdown = async () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    logger.info({ msg: "shutdown requested" });
+
+    await closeHttpServer();
+    logger.info({ msg: "http server closed" });
+
+    try {
+      await db.close();
+    } catch (err) {
+      logger.error({ msg: "error closing database", err });
+    }
     process.exit(0);
   };
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => {
+    void shutdown();
+  });
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
 }
 
 main().catch((err) => {

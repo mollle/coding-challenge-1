@@ -31,7 +31,26 @@ export async function createDb(env: Env, logger: Logger): Promise<Db> {
     connectionTimeoutMillis: 5_000,
   });
 
-  await pool.query("SELECT 1");
+  try {
+    await pool.query("SELECT 1");
+  } catch (err) {
+    try {
+      await pool.end();
+    } catch (closeErr) {
+      logger.error({
+        err: closeErr,
+        msg: "failed to close database pool after connection test failure",
+      });
+    }
+
+    logger.error({
+      err,
+      msg: "database connection test failed",
+      context: "createDb",
+    });
+
+    throw err;
+  }
   logger.info({ msg: "database connected" });
 
   return {
