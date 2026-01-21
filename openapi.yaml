@@ -86,6 +86,8 @@ paths:
                 duration: 0.000123
         '400':
           $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
@@ -99,8 +101,24 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+          examples:
+            invalidJson:
+              summary: Invalid JSON body
+              value:
+                error: "Bad Request: Invalid JSON"
+            missingStart:
+              summary: Missing start property
+              value:
+                error: "Bad Request: Missing 'start'"
+
+    PayloadTooLarge:
+      description: Payload too large - request body exceeds JSON limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
           example:
-            error: "Missing 'start'"
+            error: "Payload Too Large"
     
     ServiceUnavailable:
       description: Service unavailable - database connection unavailable or pool exhausted

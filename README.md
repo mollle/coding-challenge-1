@@ -1,24 +1,24 @@
+OpenAPI: [openapi.yaml](openapi.yaml)
 
 # Tibber Robot Cleaner Service
 
 Node.js + TypeScript + Express microservice that simulates a robot moving on a grid and counts the number of unique vertices cleaned, persisting each execution to Postgres.
 
-OpenAPI: [openapi.yaml](openapi.yaml)
-
-
-## Content
+## Table of contents
 
 - [Prerequisites](#prerequisites)
 - [Quick start (Docker)](#quick-start-docker)
+- [Troubleshooting](#troubleshooting)
 - [API](#api)
 - [Assumptions](#assumptions)
 - [Implementation Limits](#implementation-limits)
 - [Configuration](#configuration)
+- [Observability](#observability)
+- [Operations](#operations)
 - [Local development](#local-development)
 - [Tests](#tests)
 - [Project structure](#project-structure)
 - [Dependency rationale](#dependency-rationale)
-- [Submission note](#submission-note)
 
 ## Prerequisites
 
@@ -28,17 +28,10 @@ Before starting, ensure you have installed:
 
 ### Port Requirements
 
-This project uses the following ports:
-
 - **5432**: PostgreSQL database
 - **5000**: Application HTTP server
 
-**Important**: If you already have services running on these ports (e.g., a local PostgreSQL instance), you have can change the exposed ports in [docker-compose.yml](docker-compose.yml):
-
-   ```yaml
-   # Change postgres mapping from "5432:5432" to e.g. "5433:5432"
-   # Change app mapping from "5000:5000" to e.g. "5001:5000"
-   ```
+If ports are in use, change the host mappings in [docker-compose.yml](docker-compose.yml).
 
 ## Quick start (Docker)
 
@@ -87,6 +80,12 @@ curl -s -X POST http://localhost:5000/tibber-developer-test/enter-path \
 	}'
 ```
 
+PowerShell:
+
+```powershell
+$json = '{"start":{"x":10,"y":22},"commands":[{"direction":"east","steps":2},{"direction":"north","steps":1}]}'; $json | curl.exe -s -X POST http://localhost:5000/tibber-developer-test/enter-path -H "Content-Type: application/json" --data-binary "@-"
+```
+
 Response example (created execution):
 
 ```json
@@ -104,8 +103,7 @@ Note: `duration` is measured in seconds and represents path computation time onl
 Inspect persisted rows:
 
 ```bash
-docker compose exec postgres psql -U postgres -d tibber \
-	-c "SELECT * FROM executions ORDER BY timestamp DESC LIMIT 5;"
+docker compose exec postgres psql -U postgres -d tibber -c "SELECT * FROM executions ORDER BY timestamp DESC LIMIT 5;"
 ```
 
 ### Stop and cleanup
@@ -118,9 +116,21 @@ docker compose down
 docker compose down -v
 ```
 
+## Troubleshooting
+
+- Ports already in use: change the *host* port mappings in [docker-compose.yml](docker-compose.yml) (the app still listens on container port `5000`).
+- Check container status: `docker compose ps`
+- Follow logs: `docker compose logs -f postgres` and `docker compose logs -f app`
+- Postgres not healthy: inspect `docker compose logs postgres` for init errors; a fresh start can help: `docker compose down -v` then `docker compose up --build`
+- Request fails with `503 Service Unavailable`: the app could not reach Postgres (verify DB container is healthy and credentials in `docker-compose.yml`)
+
 ## API
 
 OpenAPI specification: see [openapi.yaml](openapi.yaml)
+
+- `GET /health`
+	- Health check endpoint
+	- Response: `{ "status": "ok" }`
 
 - `POST /tibber-developer-test/enter-path`
 	- Request body: `{ start: { x: number, y: number }, commands: Array<{ direction: "north"|"east"|"south"|"west", steps: number }> }`
@@ -128,14 +138,23 @@ OpenAPI specification: see [openapi.yaml](openapi.yaml)
 
 Semantics: the robot cleans the start vertex and every intermediate vertex along each step (not only the stop points).
 
+### Error responses
+
+All error responses are JSON with shape `{ "error": "..." }`.
+
+- `400 Bad Request`: invalid JSON or invalid request body types/shape
+- `404 Not Found`: unknown route
+- `413 Payload Too Large`: request body exceeds the JSON limit (1MB)
+- `503 Service Unavailable`: database unavailable
+- `500 Internal Server Error`: unexpected server error
+
 ## Assumptions
 
-- Input is syntactically well-formed (directions are valid, numbers are within reasonable bounds).
+- Input is expected to be well-formed; the service performs only minimal shape/type checks.
 - Coordinates are in range `[-100_000, 100_000]` per axis.
-- No more that 10,000 commands per request.
+- No more than 10,000 commands per request.
 - No more than 99,999 steps per command.
 - The robot is never instructed to move outside the office bounds.
-- The service performs only minimal request validation and relies on the caller to provide valid data.
 - Typical office scenarios are assumed; adversarial inputs designed to maximize unique positions (up to ~1 billion) would exceed available memory.
 
 ## Implementation Limits
@@ -174,6 +193,16 @@ Database connection is configured via environment variables:
 - `DB_PASSWORD` (default: `postgres`)
 - `LOG_LEVEL` (default: `info`)
 
+## Observability
+
+- Logs: structured JSON logs via `pino` (configure with `LOG_LEVEL`). In Docker, use `docker compose logs -f app`.
+- Health: `GET /health` is a liveness check and returns `{ "status": "ok" }` (it does not verify database connectivity).
+
+## Operations
+
+- Graceful shutdown: the service handles `SIGINT`/`SIGTERM` and closes the Postgres pool best-effort.
+- Database outages: inserts may fail and are surfaced as `503 Service Unavailable`.
+
 ## Local development
 
 If you prefer to run the application directly (without Docker):
@@ -185,50 +214,19 @@ If you prefer to run the application directly (without Docker):
 
 ### Setup PostgreSQL
 
-1. Create database and user:
-   ```bash
-   # Connect to your PostgreSQL instance
-   psql -U postgres
-   
-   # Create database
-   CREATE DATABASE tibber;
-   
-   # (Optional) Create dedicated user
-   CREATE USER tibber_user WITH PASSWORD 'your_password';
-   GRANT ALL PRIVILEGES ON DATABASE tibber TO tibber_user;
-   ```
-
-2. Initialize schema:
-   ```bash
-   psql -U postgres -d tibber -f db/init.sql
-   ```
+```bash
+psql -U postgres -c "CREATE DATABASE tibber;"
+psql -U postgres -d tibber -f db/init.sql
+```
 
 ### Run the application
 
 ```bash
-# Install dependencies
 npm ci
-
-# Type check
 npm run typecheck
-
-# Run tests
 npm test
-
-# Build TypeScript
 npm run build
-
-# Set environment variables (adjust if needed)
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=tibber
-export DB_USER=postgres
-export DB_PASSWORD=postgres
-export PORT=5000
-export LOG_LEVEL=info
-
-# Start the application
-npm start
+npm start  # requires DB_* env vars (see Configuration)
 ```
 
 ## Tests
@@ -253,11 +251,12 @@ The codebase follows a small layered layout to keep domain logic pure and testab
 
 ## Dependency rationale
 
-- `express`: HTTP server and routing
-- `pg`: PostgreSQL client (no ORM)
-- `pino`: structured logging
-- `jest`, `ts-jest`, `supertest`: unit/integration testing
+**Runtime dependencies:**
 
-## Submission note
+- **`express`** – Minimal, widely-adopted HTTP server framework with good middleware ecosystem. Chosen for simplicity and familiarity.
+- **`pg`** – Native PostgreSQL client with connection pooling built-in. 
+- **`pino`** – High-performance structured logger with minimal overhead. Outputs JSON for easy consumption by log aggregators.
 
-Remove the `.git` directory before packaging the project as a ZIP.
+**Development dependencies:**
+
+- **`jest`**, **`ts-jest`**, **`supertest`** – Industry-standard testing stack for Node.js/TypeScript. Jest provides test runner, mocking, and coverage tools. `ts-jest` enables native TypeScript support without pre-compilation. `supertest` simplifies HTTP endpoint testing with a clean API for request assertions.

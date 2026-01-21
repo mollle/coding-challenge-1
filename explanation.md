@@ -2215,10 +2215,6 @@ alles it .git löschen. git verweise in package.json löschen
 
 coderabbit  feedback
 
-openapi parsen testen
-rationale hinter ext libraries ergänezn
-
-readme aufräumne, vielleicht ieinkürzen
 
 
 # Serverless Functions vs. Docker Images (AWS & GCP)

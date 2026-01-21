@@ -34,9 +34,23 @@ export function createErrorHandler(logger: Logger) {
     res: Response,
     _next: NextFunction
   ): void {
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === "object" && value !== null;
+
     // JSON parse error from express.json()
     if (err instanceof SyntaxError && "body" in err) {
       res.status(400).json({ error: "Bad Request: Invalid JSON" });
+      return;
+    }
+
+    // Payload too large from express.json({ limit })
+    if (
+      isRecord(err) &&
+      (err["type"] === "entity.too.large" ||
+        err["name"] === "PayloadTooLargeError" ||
+        err["status"] === 413)
+    ) {
+      res.status(413).json({ error: "Payload Too Large" });
       return;
     }
 
