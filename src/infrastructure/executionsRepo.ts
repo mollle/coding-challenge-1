@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { ExecutionRecord } from "../domain/types";
+import { DatabaseError } from "../http/errorHandler";
 
 export type CreateExecution = {
   /** Number of command elements processed (commands.length). */
@@ -16,7 +17,13 @@ export type ExecutionsRepo = {
 };
 
 /**
- * Postgres-backed repository for the `executions` table.
+ * Creates a repository for the `executions` table.
+ *
+ * Handles INSERT operations and maps PostgreSQL types to domain types.
+ * Throws DatabaseError on connection issues (ECONNREFUSED, timeouts, etc.).
+ *
+ * @param pool - pg Pool instance for database access
+ * @returns Repository with insert method
  */
 export function createExecutionsRepo(pool: Pool): ExecutionsRepo {
   return {
@@ -27,11 +34,28 @@ export function createExecutionsRepo(pool: Pool): ExecutionsRepo {
         RETURNING id, timestamp, commands, result, duration
       `;
 
-      const res = await pool.query(query, [
-        data.commands,
-        data.result,
-        data.duration,
-      ]);
+      let res;
+      try {
+        res = await pool.query(query, [
+          data.commands,
+          data.result,
+          data.duration,
+        ]);
+      } catch (err) {
+        const pgError = err as { code?: string; message?: string };
+        // Connection refused, pool exhausted, or connection timeout
+        if (
+          pgError.code === "ECONNREFUSED" ||
+          pgError.code === "57P01" || // admin_shutdown
+          pgError.code === "57P02" || // crash_shutdown
+          pgError.code === "57P03" || // cannot_connect_now
+          pgError.message?.includes("timeout") ||
+          pgError.message?.includes("Connection terminated")
+        ) {
+          throw new DatabaseError("Database unavailable");
+        }
+        throw err;
+      }
 
       const row = res.rows[0] as {
         id: string | number;

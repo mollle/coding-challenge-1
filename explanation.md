@@ -2214,14 +2214,17 @@ interview prep lesen
 beim ausführen von npm ci: 
 npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful. 
 
-insert duration sichergehen das es 0.XXXXXX format ist
 
 
 dese datei und task.md aus repo löschen
 
 
-coderabbit feedbac
+coderabbit  feedback
 
+openapi parsen testen
+rationale hinter ext libraries ergänezn
+
+readme aufräumne, vielleicht ieinkürzen
 
 
 # Serverless Functions vs. Docker Images (AWS & GCP)

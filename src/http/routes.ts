@@ -25,6 +25,16 @@ function validateRequestBody(body: unknown): EnterPathRequestBody {
   return obj as unknown as EnterPathRequestBody;
 }
 
+/**
+ * Registers all HTTP routes on the Express app.
+ *
+ * Routes:
+ * - GET /health - Liveness check
+ * - POST /tibber-developer-test/enter-path - Execute robot path and persist result
+ *
+ * @param app - Express application instance
+ * @param service - EnterPathService for handling path execution
+ */
 export function registerRoutes(app: Express, service: EnterPathService): void {
   app.get("/health", (_req: Request, res: Response) => {
     res.status(200).json({ status: "ok" });

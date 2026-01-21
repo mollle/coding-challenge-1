@@ -1,5 +1,10 @@
 import { Direction } from "./types";
 
+/**
+ * A 2D movement vector for grid navigation.
+ * @property dx - Horizontal displacement (positive = east, negative = west)
+ * @property dy - Vertical displacement (positive = north, negative = south)
+ */
 export type Vector = { dx: number; dy: number };
 
 /**
@@ -13,7 +18,11 @@ const VECTORS: Record<Direction, Vector> = {
   west: { dx: -1, dy: 0 },
 };
 
-/** Maps a direction string to its movement vector. */
+/**
+ * Converts a cardinal direction to its corresponding movement vector.
+ * @param direction - One of 'north', 'east', 'south', 'west'
+ * @returns The movement vector for the given direction
+ */
 export function directionToVector(direction: Direction): Vector {
   return VECTORS[direction];
 }

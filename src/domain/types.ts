@@ -1,3 +1,4 @@
+/** Cardinal direction for robot movement. */
 export type Direction = "north" | "east" | "south" | "west";
 
 /** Start coordinate on the integer grid. */

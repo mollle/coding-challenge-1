@@ -2,11 +2,23 @@ import { Pool } from "pg";
 import { Env } from "../config/env";
 import { Logger } from "../logging/logger";
 
+/**
+ * Database connection wrapper.
+ * @property pool - pg Pool instance for query execution
+ * @property close - Gracefully closes all pool connections
+ */
 export type Db = {
   pool: Pool;
   close: () => Promise<void>;
 };
 
+/**
+ * Creates and verifies a PostgreSQL connection pool.
+ * @param env - Environment configuration with database settings
+ * @param logger - Logger for connection status messages
+ * @returns Database wrapper with pool and close method
+ * @throws If initial connection test fails
+ */
 export async function createDb(env: Env, logger: Logger): Promise<Db> {
   const pool = new Pool({
     host: env.db.host,

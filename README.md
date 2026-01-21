@@ -5,11 +5,75 @@
 
 Node.js + TypeScript + Express microservice that simulates a robot moving on a grid and counts the number of unique vertices cleaned, persisting each execution to Postgres.
 
+## Prerequisites
+
+Before starting, ensure you have installed:
+
+- **Docker Desktop** (Windows/Mac) or **Docker Engine + Docker Compose** (Linux)
+  - [Download Docker Desktop](https://www.docker.com/products/docker-desktop/)
+  - Verify installation: `docker --version` and `docker compose version`
+
+### Port Requirements
+
+This project uses the following ports:
+
+- **5432**: PostgreSQL database
+- **5000**: Application HTTP server
+
+**Important**: If you already have services running on these ports (e.g., a local PostgreSQL instance), you have two options:
+
+1. **Stop conflicting services temporarily**:
+   ```bash
+   # Example: Stop local PostgreSQL on Windows
+   net stop postgresql-x64-16
+   
+   # Example: Stop local PostgreSQL on Linux/Mac
+   sudo systemctl stop postgresql
+   # or
+   brew services stop postgresql
+   ```
+
+2. **Change the exposed ports** in [docker-compose.yml](docker-compose.yml):
+   ```yaml
+   # Change postgres mapping from "5432:5432" to e.g. "5433:5432"
+   # Change app mapping from "5000:5000" to e.g. "5001:5000"
+   ```
+   Then use the new ports in your curl commands (e.g., `http://localhost:5001/health`).
+
 ## Quick start (Docker)
+
+### What happens behind the scenes
+
+Running `docker compose up --build`:
+
+1. **Builds** the Node.js application image from [Dockerfile](Dockerfile)
+   - Installs dependencies via npm
+   - Compiles TypeScript to JavaScript
+   - Creates a production-ready image
+
+2. **Starts PostgreSQL** container (postgres:16-alpine)
+   - Initializes database `tibber` with user `postgres`
+   - Runs schema setup from [db/init.sql](db/init.sql) (creates `executions` table)
+   - Exposes port 5432 to your host machine
+   - Persists data in Docker volume `postgres_data`
+
+3. **Starts the application** container
+   - Waits for PostgreSQL to be healthy (using healthcheck)
+   - Connects to database using environment variables
+   - Starts Express server on port 5000
+   - Exposes port 5000 to your host machine
+
+### Start the services
 
 ```bash
 docker compose up --build
 ```
+
+You should see log output indicating:
+- PostgreSQL is ready to accept connections
+- Application started and listening on port 5000
+
+### Verify the setup
 
 Health check:
 
@@ -51,6 +115,39 @@ Inspect persisted rows:
 docker compose exec postgres psql -U postgres -d tibber \
 	-c "SELECT * FROM executions ORDER BY timestamp DESC LIMIT 5;"
 ```
+
+### Stop and cleanup
+
+```bash
+# Stop containers (keeps data)
+docker compose down
+
+# Stop containers and remove volumes (deletes all data)
+docker compose down -v
+```
+
+### Troubleshooting
+
+**Issue**: "port is already allocated" error
+
+**Solution**: Another service is using port 5432 or 5000. See [Port Requirements](#port-requirements) section above.
+
+---
+
+**Issue**: PostgreSQL container keeps restarting
+
+**Solution**: Check logs with `docker compose logs postgres`. Common causes:
+- Corrupted volume data: run `docker compose down -v` to remove volumes and start fresh
+- Permission issues on Windows with WSL2
+
+---
+
+**Issue**: Application can't connect to database
+
+**Solution**: 
+- Ensure PostgreSQL healthcheck passes: `docker compose ps` should show postgres as "healthy"
+- Check logs: `docker compose logs app`
+- Verify database is reachable: `docker compose exec postgres pg_isready -U postgres -d tibber`
 
 ## API
 
@@ -116,15 +213,65 @@ Database connection is configured via environment variables:
 
 ## Local development
 
+If you prefer to run the application directly (without Docker):
+
+### Prerequisites
+
+- Node.js 20+ and npm
+- PostgreSQL 16+ running locally
+
+### Setup PostgreSQL
+
+1. Create database and user:
+   ```bash
+   # Connect to your PostgreSQL instance
+   psql -U postgres
+   
+   # Create database
+   CREATE DATABASE tibber;
+   
+   # (Optional) Create dedicated user
+   CREATE USER tibber_user WITH PASSWORD 'your_password';
+   GRANT ALL PRIVILEGES ON DATABASE tibber TO tibber_user;
+   ```
+
+2. Initialize schema:
+   ```bash
+   psql -U postgres -d tibber -f db/init.sql
+   ```
+
+### Run the application
+
 ```bash
+# Install dependencies
 npm ci
+
+# Type check
 npm run typecheck
+
+# Run tests
 npm test
+
+# Build TypeScript
 npm run build
+
+# Set environment variables (adjust if needed)
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_NAME=tibber
+export DB_USER=postgres
+export DB_PASSWORD=postgres
+export PORT=5000
+export LOG_LEVEL=info
+
+# Start the application
 npm start
 ```
 
-Note: `npm start` requires Postgres to be running and reachable via the env vars above.
+**Windows PowerShell**:
+```powershell
+$env:DB_HOST="localhost"; $env:DB_PORT="5432"; $env:DB_NAME="tibber"; $env:DB_USER="postgres"; $env:DB_PASSWORD="postgres"; $env:PORT="5000"; $env:LOG_LEVEL="info"; npm start
+```
 
 ## Tests
 

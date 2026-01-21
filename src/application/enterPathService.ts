@@ -24,11 +24,12 @@ export function createEnterPathService(repo: ExecutionsRepo): EnterPathService {
       const endNs = process.hrtime.bigint();
 
       const durationSeconds = Number(endNs - startNs) / 1e9;
+      const durationRounded = parseFloat(durationSeconds.toFixed(6));
 
       return repo.insert({
         commands: body.commands.length,
         result,
-        duration: durationSeconds,
+        duration: durationRounded,
       });
     },
   };

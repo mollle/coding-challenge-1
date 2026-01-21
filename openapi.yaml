@@ -1,0 +1,226 @@
+openapi: 3.0.3
+info:
+  title: Robot Cleaner Microservice API
+  description: |
+    A microservice that simulates a robot moving in an office space and cleaning the places it visits.
+    The robot starts at specific coordinates and follows move commands, tracking unique places cleaned.
+  version: 1.0.0
+  contact:
+    name: Tibber Developer Test
+
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns the health status of the service
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /tibber-developer-test/enter-path:
+    post:
+      summary: Execute robot path
+      description: |
+        Simulates a robot cleaning path starting from given coordinates and following movement commands.
+        The robot cleans every vertex it visits (including start position and all intermediate steps).
+        Returns the execution record with the number of unique places cleaned and stores it in the database.
+      operationId: enterPath
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnterPathRequest'
+            examples:
+              simple:
+                summary: Simple path example
+                value:
+                  start:
+                    x: 10
+                    y: 22
+                  commands:
+                    - direction: east
+                      steps: 2
+                    - direction: north
+                      steps: 1
+              complex:
+                summary: Complex path with multiple commands
+                value:
+                  start:
+                    x: 0
+                    y: 0
+                  commands:
+                    - direction: north
+                      steps: 5
+                    - direction: east
+                      steps: 3
+                    - direction: south
+                      steps: 5
+                    - direction: west
+                      steps: 3
+      responses:
+        '201':
+          description: Execution successfully created and persisted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionRecord'
+              example:
+                id: 1
+                timestamp: "2026-01-21T10:30:00.000Z"
+                commands: 2
+                result: 4
+                duration: 0.000123
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  responses:
+    BadRequest:
+      description: Bad request - invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Missing 'start'"
+    
+    ServiceUnavailable:
+      description: Service unavailable - database connection unavailable or pool exhausted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Service Unavailable"
+    
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Internal Server Error"
+
+  schemas:
+    Start:
+      type: object
+      description: Starting coordinate on the integer grid
+      required:
+        - x
+        - y
+      properties:
+        x:
+          type: integer
+          description: X coordinate on the grid
+          minimum: -100000
+          maximum: 100000
+          example: 10
+        y:
+          type: integer
+          description: Y coordinate on the grid
+          minimum: -100000
+          maximum: 100000
+          example: 22
+
+    Command:
+      type: object
+      description: A movement instruction for the robot
+      required:
+        - direction
+        - steps
+      properties:
+        direction:
+          type: string
+          description: Direction to move
+          enum:
+            - north
+            - east
+            - south
+            - west
+          example: east
+        steps:
+          type: integer
+          description: Number of steps to move in the given direction
+          minimum: 1
+          maximum: 99999
+          example: 2
+
+    EnterPathRequest:
+      type: object
+      description: Request body for robot path execution
+      required:
+        - start
+        - commands
+      properties:
+        start:
+          $ref: '#/components/schemas/Start'
+        commands:
+          type: array
+          description: List of movement commands
+          items:
+            $ref: '#/components/schemas/Command'
+          minItems: 0
+          maxItems: 10000
+
+    ExecutionRecord:
+      type: object
+      description: Execution record as returned by the API and persisted in database
+      required:
+        - id
+        - timestamp
+        - commands
+        - result
+        - duration
+      properties:
+        id:
+          type: integer
+          description: Unique identifier for the execution
+          example: 1
+        timestamp:
+          type: string
+          format: date-time
+          description: Time of insertion (ISO 8601 format)
+          example: "2026-01-21T10:30:00.000Z"
+        commands:
+          type: integer
+          description: Number of command elements processed
+          example: 2
+        result:
+          type: integer
+          description: Number of unique vertices cleaned
+          example: 4
+        duration:
+          type: number
+          format: double
+          description: Calculation duration in seconds (fractional)
+          example: 0.000123
+
+    Error:
+      type: object
+      description: Error response
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Internal Server Error"

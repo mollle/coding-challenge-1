@@ -11,6 +11,22 @@ export class ValidationError extends Error {
   }
 }
 
+/**
+ * Custom error for database connectivity issues (returns 503).
+ */
+export class DatabaseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DatabaseError";
+  }
+}
+
+/**
+ * Creates Express error-handling middleware.
+ * Handles ValidationError (400), DatabaseError (503), and unknown errors (500).
+ * @param logger - Logger instance for error reporting
+ * @returns Express error handler middleware
+ */
 export function createErrorHandler(logger: Logger) {
   return function errorHandler(
     err: unknown,
@@ -27,6 +43,13 @@ export function createErrorHandler(logger: Logger) {
     // Validation error (type mismatch)
     if (err instanceof ValidationError) {
       res.status(400).json({ error: `Bad Request: ${err.message}` });
+      return;
+    }
+
+    // Database connectivity error -> 503
+    if (err instanceof DatabaseError) {
+      logger.error({ msg: "database unavailable", err: err.message });
+      res.status(503).json({ error: "Service Unavailable" });
       return;
     }
 
