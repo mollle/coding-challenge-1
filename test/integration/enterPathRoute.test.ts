@@ -3,6 +3,7 @@ import { createLogger } from "../../src/logging/logger";
 import { createApp } from "../../src/app";
 import { EnterPathService } from "../../src/application/enterPathService";
 import { ExecutionRecord } from "../../src/domain/types";
+import { DatabaseError } from "../../src/http/errorHandler";
 
 function createTestApp(fakeService?: EnterPathService) {
   const logger = createLogger({ logLevel: "fatal" });
@@ -74,6 +75,74 @@ describe("POST /tibber-developer-test/enter-path", () => {
     expect(res.body).toHaveProperty("error");
   });
 
+  it.each([
+    {
+      name: "body is not an object",
+      body: "123",
+    },
+    {
+      name: "start is not an object",
+      body: { start: 1, commands: [] },
+    },
+    {
+      name: "start.x is not a number",
+      body: { start: { x: "10", y: 22 }, commands: [] },
+    },
+    {
+      name: "start.x is not an integer",
+      body: { start: { x: 10.5, y: 22 }, commands: [] },
+    },
+    {
+      name: "start.y is not an integer",
+      body: { start: { x: 10, y: 22.5 }, commands: [] },
+    },
+    {
+      name: "commands element is not an object",
+      body: { start: { x: 0, y: 0 }, commands: [null] },
+    },
+    {
+      name: "command.direction is invalid",
+      body: {
+        start: { x: 0, y: 0 },
+        commands: [{ direction: "northeast", steps: 1 }],
+      },
+    },
+    {
+      name: "command.steps is not a number",
+      body: {
+        start: { x: 0, y: 0 },
+        commands: [{ direction: "east", steps: "1" }],
+      },
+    },
+    {
+      name: "command.steps is not an integer",
+      body: {
+        start: { x: 0, y: 0 },
+        commands: [{ direction: "east", steps: 1.25 }],
+      },
+    },
+  ])("returns 400 when %s", async ({ body }) => {
+    const service: EnterPathService = {
+      execute: jest.fn(async () => ({
+        id: 1,
+        timestamp: new Date().toISOString(),
+        commands: 0,
+        result: 1,
+        duration: 0.0001,
+      })),
+    };
+
+    const app = createTestApp(service);
+
+    const req = request(app).post("/tibber-developer-test/enter-path");
+    if (typeof body === "string") {
+      req.set("Content-Type", "application/json");
+    }
+
+    await req.send(body as any).expect(400);
+    expect(service.execute).not.toHaveBeenCalled();
+  });
+
   it("returns 500 when service throws an unexpected error", async () => {
     const app = createTestApp({
       execute: async () => {
@@ -90,6 +159,24 @@ describe("POST /tibber-developer-test/enter-path", () => {
       .expect(500);
 
     expect(res.body).toEqual({ error: "Internal Server Error" });
+  });
+
+  it("returns 503 when database is unreachable", async () => {
+    const app = createTestApp({
+      execute: async () => {
+        throw new DatabaseError("Database unavailable");
+      },
+    });
+
+    const res = await request(app)
+      .post("/tibber-developer-test/enter-path")
+      .send({
+        start: { x: 10, y: 22 },
+        commands: [{ direction: "east", steps: 1 }],
+      })
+      .expect(503);
+
+    expect(res.body).toEqual({ error: "Service Unavailable" });
   });
 });
 

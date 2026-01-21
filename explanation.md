@@ -2207,17 +2207,11 @@ jobs:
 
 
 # Open
-Amazon S3 und blob sotrage
-
-interview prep lesen
-
-beim ausführen von npm ci: 
-npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful. 
-
 
 
 dese datei und task.md aus repo löschen
 
+alles it .git löschen. git verweise in package.json löschen
 
 coderabbit  feedback
 
@@ -2284,3 +2278,493 @@ readme aufräumne, vielleicht ieinkürzen
 
 - Der Tibber-Service ist als Docker-Microservice mit HTTP-Endpoint, Berechnungslogik und PostgreSQL-Persistenz gedacht [file:1].
 - Für so einen dauerhaften HTTP-Service mit DB-Anbindung passen Container-Ansätze wie **AWS ECS Fargate** oder **Google Cloud Run** typischerweise besser als Serverless Functions, die primär für kurze, zustandslose Funktionen optimiert sind [web:4][web:7][file:1].
+
+
+
+# Tibber Backend Case Study — Project Explanation & Interview Prep
+
+This document explains the project end-to-end: architecture, algorithms,
+dependencies, Docker/DB setup, and testing strategy. It is written to help you
+walk confidently through the solution in a technical interview.
+
+---
+
+## 1) Problem Summary (What the service does)
+
+We build a microservice that:
+
+1. Accepts a robot movement path via HTTP:
+   - `POST /tibber-developer-test/enter-path`
+   - request contains a start coordinate and a list of commands
+
+2. Simulates the robot moving on a grid:
+   - The robot cleans every vertex it touches, including the start
+   - Commands move the robot step-by-step in one cardinal direction
+
+3. Computes:
+   - The number of **unique** positions cleaned
+
+4. Persists the result into PostgreSQL:
+   - `executions` table
+   - stores insertion timestamp, number of commands, result, and duration
+
+5. Returns the created DB record as JSON.
+
+Constraints:
+- Up to 10,000 commands; steps per command up to 99,999.
+- Inputs are assumed well-formed (no elaborate validation required).
+
+---
+
+## 2) High-Level Architecture (Clean but not over-engineered)
+
+The code is separated into small layers, each with a single responsibility:
+
+- **Domain** (`src/domain/*`): pure business logic (robot simulation)
+- **Application** (`src/application/*`): orchestration (timing + persistence)
+- **Infrastructure** (`src/infrastructure/*`): PostgreSQL access via `pg`
+- **HTTP** (`src/http/*`): routing and error handling
+- **Composition root** (`src/index.ts`): wires everything together
+
+### Why this structure?
+- **Testability**: Domain logic can be unit-tested without DB/HTTP.
+- **Maintainability**: DB code changes don’t touch domain logic.
+- **Production-readiness**: clear boundaries help future extension
+  (e.g., add Kafka consumer later) without rewriting core logic.
+- **Not over-engineered**: no complex DI frameworks or heavy abstractions.
+
+---
+
+## 3) Folder & File Breakdown (What each file does and why)
+
+### 3.1 `src/domain/` — business rules, framework-independent
+
+- `types.ts`
+  - Defines the request and domain types:
+    - `Direction`, `Command`, `Start`, `EnterPathRequestBody`, `ExecutionRecord`
+  - Keeps type definitions centralized to avoid duplication and inconsistencies.
+
+- `direction.ts`
+  - Maps direction strings to movement vectors:
+    - north → (0, +1), east → (+1, 0), south → (0, −1), west → (−1, 0)
+  - A simple `Record<Direction, Vector>` is more readable than a switch and
+    prevents invalid keys at compile time.
+
+- `robotPath.ts`
+  - Contains the core algorithm: `countUniqueCleaned(start, commands)`.
+  - Implemented as a **pure function**, not a class with mutable fields.
+  - Why pure:
+    - avoids hidden shared state across requests
+    - predictable, deterministic, easy to test
+
+### 3.2 `src/application/` — use case orchestration
+
+- `enterPathService.ts`
+  - Implements the single use case:
+    - measure calculation time
+    - call domain function
+    - persist via repository
+    - return created record
+  - Why separate from HTTP:
+    - can be triggered from other adapters later (Kafka, cron, etc.)
+    - unit-testable by mocking the repository
+
+### 3.3 `src/infrastructure/` — DB connectivity and SQL
+
+- `db.ts`
+  - Creates and verifies a `pg.Pool` using env vars.
+  - Keeps DB connection management in one place.
+  - Logs connection lifecycle using the app logger.
+
+- `executionsRepo.ts`
+  - Repository that inserts an execution into Postgres.
+  - Uses raw SQL `INSERT ... RETURNING ...`.
+  - Converts returned values to numbers for consistent API output.
+
+### 3.4 `src/http/` — Express integration
+
+- `routes.ts`
+  - Registers:
+    - `GET /health`
+    - `POST /tibber-developer-test/enter-path`
+  - Minimal; delegates all logic to the application service.
+
+- `errorHandler.ts`
+  - Global error middleware:
+    - logs error via `pino`
+    - returns `500` with a stable JSON error body
+
+### 3.5 Composition root
+
+- `app.ts`
+  - Builds an Express app given:
+    - `logger`
+    - `enterPathService`
+  - This makes it trivial to test routes with `supertest` and a fake service.
+
+- `index.ts`
+  - Wires everything together for production:
+    - load env
+    - create logger
+    - connect DB
+    - create repo/service/app
+    - start listening on port 5000
+  - Handles graceful shutdown signals (`SIGINT`, `SIGTERM`).
+
+---
+
+## 4) Algorithm Explanation (Core logic)
+
+### 4.1 Requirement
+Count how many **unique** grid vertices are cleaned. Robot cleans:
+- the start vertex
+- every intermediate vertex on the path, not only where it stops
+
+### 4.2 Approach
+Use a `Set` to track visited coordinates.
+
+Pseudo:
+1. `(x, y) = start`
+2. `visited = Set()`
+3. `visited.add("x,y")`
+4. for each command:
+   - get `(dx, dy)` from direction
+   - repeat `steps` times:
+     - `x += dx`, `y += dy`
+     - `visited.add("x,y")`
+5. return `visited.size`
+
+### 4.3 Why `Set`?
+- Uniqueness check is average **O(1)**.
+- Using an array would make “already visited?” checks O(n) each,
+  turning runtime into O(n²) in worst cases.
+
+### 4.4 Complexity
+- Time: O(totalSteps) where totalSteps = sum(command.steps)
+- Memory: O(uniquePositions)
+
+This is the simplest correct solution. The spec does not require advanced
+segment-based counting; implementing that would be “over-engineering”.
+
+### 4.5 Implementation choice: `"x,y"` key
+- Simple and readable.
+- Works within the given coordinate bounds.
+- Alternative is packing into a 64-bit integer for speed; not necessary for this
+  case study and less readable.
+
+---
+
+## 5) Persistence & DB Design
+
+### 5.1 Schema
+
+`db/init.sql` creates:
+
+- `executions`:
+  - `id BIGSERIAL PRIMARY KEY`
+  - `timestamp TIMESTAMPTZ NOT NULL DEFAULT now()`
+  - `commands INTEGER NOT NULL`
+  - `result BIGINT NOT NULL`
+  - `duration DOUBLE PRECISION NOT NULL`
+
+Optional index on timestamp:
+- `idx_executions_timestamp_desc`
+
+### 5.2 Why timestamp is DB-generated
+The requirement says “timestamp of insertion”. The most correct source of truth
+is the database itself. Therefore:
+- the insert query omits `timestamp`
+- Postgres sets it via `DEFAULT now()`
+- we return it via `RETURNING`
+
+### 5.3 Why raw SQL (no ORM)
+- Only one table, one insert query.
+- Raw SQL is explicit, easy to review, and minimal dependencies.
+- ORMs would add complexity and “magic”, which Tibber explicitly discourages.
+
+---
+
+## 6) Duration Measurement
+
+### 6.1 Requirement
+Store “duration of the calculation in seconds”.
+
+### 6.2 How it’s done
+We measure only the domain calculation, not DB insert or HTTP overhead:
+
+- `process.hrtime.bigint()` provides high-resolution timing.
+- durationSeconds = (endNs - startNs) / 1e9.
+
+Why this approach:
+- built-in Node API, stable and precise
+- avoids issues with system clock changes
+
+---
+
+## 7) HTTP API Behavior
+
+### 7.1 POST endpoint
+- Path: `/tibber-developer-test/enter-path`
+- Returns: `201 Created`
+- Body: the created record:
+  - `id`, `timestamp`, `commands`, `result`, `duration`
+
+### 7.2 Health endpoint
+- `GET /health` returns `200` with `{ "status": "ok" }`
+- Useful for Docker/Kubernetes readiness/liveness in real systems.
+- Not required by the spec but a minimal, helpful addition.
+
+### 7.3 Error handling
+- Any unhandled error results in:
+  - log at error level (structured JSON)
+  - response `500` with `{ "error": "Internal Server Error" }`
+
+We keep this minimal because the spec says input is well-formed.
+
+---
+
+## 8) Logging (no console.log)
+
+### 8.1 Why structured logs
+In production microservices, logs are often ingested into systems like ELK,
+Datadog, or CloudWatch. JSON structured logs:
+- are easier to query/filter
+- work well across distributed systems
+
+### 8.2 Why `pino`
+- commonly used in production Node services
+- fast and lightweight
+- supports log levels via `LOG_LEVEL`
+
+We intentionally do not add more observability tooling (metrics/tracing) to avoid
+over-engineering.
+
+---
+
+## 9) Docker & Docker Compose
+
+### 9.1 Why Docker Compose
+The assignment requires:
+> “The application should start by simply running `docker compose up`”
+
+Compose provides a reproducible environment with:
+- Postgres database
+- the app container
+- correct networking (app connects to `DB_HOST=postgres`)
+
+### 9.2 DB initialization strategy
+Mount `db/init.sql` into Postgres container at:
+- `/docker-entrypoint-initdb.d/init.sql`
+
+This is a standard Postgres mechanism: it runs SQL scripts on first initialization.
+No manual migration step is needed.
+
+### 9.3 Multi-stage Dockerfile
+- **builder stage**: installs dev deps and compiles TypeScript
+- **runtime stage**: installs only prod deps (`npm ci --omit=dev`) and runs `dist/`
+
+Why this is production-ready:
+- smaller final image
+- dev-only dependencies (jest/ts-jest) are not shipped
+- reduces security surface area
+
+### 9.4 Node version
+Local dev can use Node 22; Docker runtime uses Node 20 LTS for stability.
+This is common in real teams.
+
+---
+
+## 10) Testing Strategy
+
+### 10.1 Why tests matter (as Tibber states explicitly)
+- The case says: “WE LOVE unit testing!”
+- In transaction-heavy domains (energy market), correctness matters.
+
+### 10.2 Unit tests
+- Domain tests cover:
+  - spec example
+  - zero commands
+  - overlapping paths
+  - negative coordinates
+  - all directions
+  - 10,000 commands (ensures algorithmic choice is correct)
+
+- Application tests:
+  - mock repo
+  - verify correct commands count, result, duration
+
+### 10.3 Route-level integration test (without DB)
+- Uses `supertest` with a fake `EnterPathService`
+- Verifies HTTP contract:
+  - status 201
+  - response contains required fields
+
+This avoids flaky DB-based tests while still proving routing correctness.
+
+---
+
+## 11) Dependencies — What and Why
+
+### Production
+- `express`: minimal HTTP server framework; reduces boilerplate vs built-in `http`.
+- `pg`: minimal, mature Postgres driver (Node has no built-in Postgres client).
+- `pino`: structured logging, production-friendly, avoids console logging.
+
+### Dev/Test
+- `typescript`: compile-time safety; aligns with Tibber stack.
+- `@types/*`: type definitions for JS libraries used.
+- `jest`: standard test runner, fast feedback.
+- `ts-jest`: runs TS tests in Jest without separate build step.
+- `supertest`: convenient HTTP tests for Express routes.
+
+We intentionally avoid ORMs/validation frameworks/DI containers.
+
+---
+
+# Technical Interview Prep
+
+## A) Common Questions & Suggested Answers
+
+### 1) “Walk us through your architecture.”
+**Answer**
+I kept a small layered structure:
+- Domain: pure function counting unique cleaned vertices, framework-independent.
+- Application: orchestrates use case, measures computation duration, persists via repo.
+- Infrastructure: Postgres repository with raw SQL.
+- HTTP: Express routes and error middleware.
+This separation makes the core logic easy to test and keeps DB/HTTP concerns
+isolated.
+
+---
+
+### 2) “How does your algorithm work and what is its complexity?”
+**Answer**
+I iterate through each step of each command and track visited vertices in a
+Set. The result is `Set.size`. Time complexity is O(totalSteps), memory is
+O(uniquePositions). Set avoids O(n²) behavior that an array uniqueness check
+could introduce.
+
+---
+
+### 3) “Why did you choose `Set` and why store coordinates as strings?”
+**Answer**
+`Set` provides O(1) average membership and insertion, which is ideal for
+uniqueness. Coordinate string keys (`"x,y"`) are readable and sufficient for
+the given bounds. Packing into a 64-bit value could be faster but reduces clarity
+and isn’t necessary for this case study.
+
+---
+
+### 4) “How do you ensure correctness across multiple requests?”
+**Answer**
+The domain logic is a pure function with a local Set inside the function, so no
+state persists between calls. This prevents cross-request contamination.
+
+---
+
+### 5) “How is duration measured and why that method?”
+**Answer**
+Duration is measured only around the calculation logic using
+`process.hrtime.bigint()` and converted into seconds. It’s a built-in, high
+resolution monotonic timer, not affected by system clock changes, and matches
+the requirement “duration of calculation”.
+
+---
+
+### 6) “Why is the timestamp generated by the database?”
+**Answer**
+The requirement says “timestamp of insertion”. The DB is the source of truth for
+insert time. Using `DEFAULT now()` avoids clock drift and ensures the timestamp
+reflects the actual insert.
+
+---
+
+### 7) “Why raw SQL and no ORM?”
+**Answer**
+The persistence needs are minimal: one table and a single insert query. Raw SQL
+is explicit and easy to review, reduces dependencies, and avoids ORM magic and
+migration complexity—aligned with the instruction to avoid over-engineering.
+
+---
+
+### 8) “How would you make this scale / handle high throughput?”
+**Answer**
+First, I’d ensure correctness. Scaling options:
+- Run multiple replicas behind a load balancer (stateless app).
+- Tune PG pool size and DB resources.
+- Add request rate limiting at gateway if needed.
+- For extremely large paths, consider segment-based counting to reduce per-step
+  iteration (but that’s beyond the case study).
+- Add metrics/tracing (Prometheus/OpenTelemetry) in production.
+
+---
+
+### 9) “What would you improve for production?”
+**Answer**
+- Input validation and request size limits (even if spec says well-formed).
+- Metrics (latency, error rate) and tracing for observability.
+- Better error classification (4xx vs 5xx) and consistent error responses.
+- Timeouts/retry policies around DB if needed.
+- Migrations strategy (Flyway or a minimal migration runner) for evolving schema.
+
+---
+
+### 10) “How does Docker Compose ensure it’s runnable on a clean machine?”
+**Answer**
+Compose starts Postgres and the app with known versions and environment variables.
+The schema is created automatically via `db/init.sql` using Postgres’ standard
+`/docker-entrypoint-initdb.d` mechanism. The app waits for Postgres health before
+starting, so `docker compose up --build` works without manual setup.
+
+---
+
+### 11) “Why include `/health` if it’s not required?”
+**Answer**
+It’s a minimal operational endpoint that helps readiness checks in container
+environments. It’s low effort and improves operability without adding complexity.
+
+---
+
+### 12) “What about the npm audit/deprecation warnings in dev tooling?”
+**Answer**
+Those warnings are in transitive devDependencies (test tooling). The production
+Docker image installs only production dependencies (`npm ci --omit=dev`), so they
+are not shipped to runtime. For a production pipeline, we’d keep dependencies
+updated and enforce policies via CI, but for this case it does not affect the
+runtime artifact.
+
+---
+
+## B) Drill Questions (short-form)
+
+- What happens when `commands` is empty?  
+  Start position is still cleaned → result 1.
+
+- Does the robot clean intermediate steps?  
+  Yes, every vertex touched; implemented by iterating each step.
+
+- Where do you measure duration?  
+  Around domain calculation only, not DB insert.
+
+- Why `timestamptz` instead of `timestamp`?  
+  It avoids timezone ambiguity and is more production-safe.
+
+---
+
+## C) How to present a quick walkthrough (2–3 minutes)
+
+1) “The HTTP route accepts start + commands.”
+2) “Application service measures calculation time, calls a pure domain function.”
+3) “Domain iterates steps and tracks visited vertices in a Set.”
+4) “Repository inserts into Postgres with DB-generated timestamp.”
+5) “We return the inserted record.”
+6) “We have unit tests for domain and service, plus a route smoke test.”
+
+---
+
+## D) Good closing statement in interview
+
+“I kept the solution minimal but production-like: clear boundaries, pure business
+logic, explicit SQL, DB-managed insertion timestamps, high-resolution timing, and
+tests that cover correctness and key edge cases. The service is reproducible via
+Docker Compose as required.”

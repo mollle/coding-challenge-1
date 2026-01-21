@@ -1,17 +1,30 @@
 
-
-
 # Tibber Robot Cleaner Service
 
 Node.js + TypeScript + Express microservice that simulates a robot moving on a grid and counts the number of unique vertices cleaned, persisting each execution to Postgres.
+
+OpenAPI: [openapi.yaml](openapi.yaml)
+
+
+## Content
+
+- [Prerequisites](#prerequisites)
+- [Quick start (Docker)](#quick-start-docker)
+- [API](#api)
+- [Assumptions](#assumptions)
+- [Implementation Limits](#implementation-limits)
+- [Configuration](#configuration)
+- [Local development](#local-development)
+- [Tests](#tests)
+- [Project structure](#project-structure)
+- [Dependency rationale](#dependency-rationale)
+- [Submission note](#submission-note)
 
 ## Prerequisites
 
 Before starting, ensure you have installed:
 
 - **Docker Desktop** (Windows/Mac) or **Docker Engine + Docker Compose** (Linux)
-  - [Download Docker Desktop](https://www.docker.com/products/docker-desktop/)
-  - Verify installation: `docker --version` and `docker compose version`
 
 ### Port Requirements
 
@@ -20,50 +33,29 @@ This project uses the following ports:
 - **5432**: PostgreSQL database
 - **5000**: Application HTTP server
 
-**Important**: If you already have services running on these ports (e.g., a local PostgreSQL instance), you have two options:
+**Important**: If you already have services running on these ports (e.g., a local PostgreSQL instance), you have can change the exposed ports in [docker-compose.yml](docker-compose.yml):
 
-1. **Stop conflicting services temporarily**:
-   ```bash
-   # Example: Stop local PostgreSQL on Windows
-   net stop postgresql-x64-16
-   
-   # Example: Stop local PostgreSQL on Linux/Mac
-   sudo systemctl stop postgresql
-   # or
-   brew services stop postgresql
-   ```
-
-2. **Change the exposed ports** in [docker-compose.yml](docker-compose.yml):
    ```yaml
    # Change postgres mapping from "5432:5432" to e.g. "5433:5432"
    # Change app mapping from "5000:5000" to e.g. "5001:5000"
    ```
-   Then use the new ports in your curl commands (e.g., `http://localhost:5001/health`).
 
 ## Quick start (Docker)
 
-### What happens behind the scenes
+Running `docker compose up` will:
 
-Running `docker compose up --build`:
-
-1. **Builds** the Node.js application image from [Dockerfile](Dockerfile)
-   - Installs dependencies via npm
-   - Compiles TypeScript to JavaScript
-   - Creates a production-ready image
-
-2. **Starts PostgreSQL** container (postgres:16-alpine)
-   - Initializes database `tibber` with user `postgres`
-   - Runs schema setup from [db/init.sql](db/init.sql) (creates `executions` table)
-   - Exposes port 5432 to your host machine
-   - Persists data in Docker volume `postgres_data`
-
-3. **Starts the application** container
-   - Waits for PostgreSQL to be healthy (using healthcheck)
-   - Connects to database using environment variables
-   - Starts Express server on port 5000
-   - Exposes port 5000 to your host machine
+- build the app image from [Dockerfile](Dockerfile) (TypeScript → JavaScript)
+- start PostgreSQL (postgres:16-alpine) and initialize the schema from [db/init.sql](db/init.sql) on first startup
+- start the app after the Postgres healthcheck passes (listens on port 5000)
+- persist database data in the `postgres_data` Docker volume
 
 ### Start the services
+
+```bash
+docker compose up
+```
+
+If you've changed dependencies or application code and want to force a rebuild:
 
 ```bash
 docker compose up --build
@@ -126,30 +118,9 @@ docker compose down
 docker compose down -v
 ```
 
-### Troubleshooting
-
-**Issue**: "port is already allocated" error
-
-**Solution**: Another service is using port 5432 or 5000. See [Port Requirements](#port-requirements) section above.
-
----
-
-**Issue**: PostgreSQL container keeps restarting
-
-**Solution**: Check logs with `docker compose logs postgres`. Common causes:
-- Corrupted volume data: run `docker compose down -v` to remove volumes and start fresh
-- Permission issues on Windows with WSL2
-
----
-
-**Issue**: Application can't connect to database
-
-**Solution**: 
-- Ensure PostgreSQL healthcheck passes: `docker compose ps` should show postgres as "healthy"
-- Check logs: `docker compose logs app`
-- Verify database is reachable: `docker compose exec postgres pg_isready -U postgres -d tibber`
-
 ## API
+
+OpenAPI specification: see [openapi.yaml](openapi.yaml)
 
 - `POST /tibber-developer-test/enter-path`
 	- Request body: `{ start: { x: number, y: number }, commands: Array<{ direction: "north"|"east"|"south"|"west", steps: number }> }`
@@ -161,6 +132,8 @@ Semantics: the robot cleans the start vertex and every intermediate vertex along
 
 - Input is syntactically well-formed (directions are valid, numbers are within reasonable bounds).
 - Coordinates are in range `[-100_000, 100_000]` per axis.
+- No more that 10,000 commands per request.
+- No more than 99,999 steps per command.
 - The robot is never instructed to move outside the office bounds.
 - The service performs only minimal request validation and relies on the caller to provide valid data.
 - Typical office scenarios are assumed; adversarial inputs designed to maximize unique positions (up to ~1 billion) would exceed available memory.
@@ -172,32 +145,22 @@ pair is encoded as a single number for memory efficiency.
 
 ### Memory Constraints (512 MB container)
 
-| Component | Estimated Usage |
-|-----------|-----------------|
-| Docker + Node.js + App | ~100-150 MB |
-| Available for tracking | ~350-400 MB |
-| **Max unique positions** | **~7-8 million** |
+When the container is limited to 512 MB, Node/V8 will typically cap the JavaScript heap well below that (cgroup-aware). In a quick probe inside `node:20-alpine` with `--memory=512m`, the V8 heap limit was ~259 MiB.
 
-### Real-World Scale (1 field = 1 cm²)
+### Real-World Scale (1 step = 1 cm)
+
+The task models the office as a grid of vertices, so “cleaned” is a count of unique vertices (points). If we additionally assume the distance between adjacent vertices is 1 cm, then each step corresponds to 1 cm of path length.
 
 | Metric | Value |
 |--------|-------|
-| Max cleanable area | ~700-800 m² |
-| Equivalent | Large apartment / small house |
+| Max unique vertices before OOM (measured, 512 MB container) | ~8,000,000 |
+| Max path length through new territory (worst-case, no revisits) | ~80 km |
 
 ### Worst-Case Input
 
-The theoretical maximum (10,000 commands × 99,999 steps = ~1 billion positions)
-would require ~40 GB RAM. This implementation handles typical office scenarios
-but will run out of memory on adversarial inputs designed to maximize unique positions.
+The theoretical maximum (10,000 commands × 99,999 steps = ~1 billion positions) would require tens of GB of RAM. This implementation handles typical office scenarios but will run out of memory on adversarial inputs designed to maximize unique positions.
 
 For production use with extreme inputs, a segment-based algorithm would be needed.
-
-## Operations
-
-- Health endpoint: `GET /health` (liveness)
-- Logging: structured logs via `pino` (see `LOG_LEVEL`)
-- Shutdown: best-effort graceful shutdown on `SIGINT`/`SIGTERM` (closes DB pool)
 
 ## Configuration
 
@@ -268,16 +231,16 @@ export LOG_LEVEL=info
 npm start
 ```
 
-**Windows PowerShell**:
-```powershell
-$env:DB_HOST="localhost"; $env:DB_PORT="5432"; $env:DB_NAME="tibber"; $env:DB_USER="postgres"; $env:DB_PASSWORD="postgres"; $env:PORT="5000"; $env:LOG_LEVEL="info"; npm start
-```
-
 ## Tests
 
 ```bash
 npm test
+
+# Run tests with coverage report
+npm run test:coverage
 ```
+
+Coverage output is written to `coverage/` (HTML report: `coverage/lcov-report/index.html`).
 
 ## Project structure
 

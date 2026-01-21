@@ -4,25 +4,53 @@ import { EnterPathRequestBody } from "../domain/types";
 import { ValidationError } from "./errorHandler";
 
 /**
- * Minimal guard: checks that start and commands exist.
- * Per task spec, inputs are assumed well-formed, so no elaborate validation.
+ * Minimal guard: checks basic shape + primitive types.
+ * Per task spec, inputs are assumed well-formed, so no elaborate validation (no range checks).
  */
 function validateRequestBody(body: unknown): EnterPathRequestBody {
-  if (typeof body !== "object" || body === null) {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null;
+
+  const isFiniteInteger = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+
+  const isDirection = (value: unknown): value is EnterPathRequestBody["commands"][number]["direction"] =>
+    value === "north" || value === "east" || value === "south" || value === "west";
+
+  if (!isRecord(body)) {
     throw new ValidationError("Request body must be an object");
   }
 
-  const obj = body as Record<string, unknown>;
-
-  if (!("start" in obj)) {
+  if (!("start" in body)) {
     throw new ValidationError("Missing 'start'");
   }
-
-  if (!("commands" in obj) || !Array.isArray(obj.commands)) {
+  if (!("commands" in body) || !Array.isArray(body.commands)) {
     throw new ValidationError("Missing or invalid 'commands'");
   }
 
-  return obj as unknown as EnterPathRequestBody;
+  const start = body.start;
+  if (!isRecord(start)) {
+    throw new ValidationError("Invalid 'start'");
+  }
+  if (!isFiniteInteger(start.x) || !isFiniteInteger(start.y)) {
+    throw new ValidationError("Invalid 'start' coordinates");
+  }
+
+  for (const cmd of body.commands) {
+    if (!isRecord(cmd)) {
+      throw new ValidationError("Invalid command");
+    }
+
+    if (!isDirection(cmd.direction)) {
+      throw new ValidationError("Invalid command direction");
+    }
+
+    if (!isFiniteInteger(cmd.steps)) {
+      throw new ValidationError("Invalid command steps");
+    }
+  }
+
+  return body as EnterPathRequestBody;
 }
 
 /**
