@@ -1,33 +1,12 @@
 import { Express, NextFunction, Request, Response } from "express";
 import { EnterPathService } from "../application/enterPathService";
-import { Command, Direction, EnterPathRequestBody, Start } from "../domain/types";
+import { EnterPathRequestBody } from "../domain/types";
 import { ValidationError } from "./errorHandler";
 
-const VALID_DIRECTIONS: Direction[] = ["north", "east", "south", "west"];
-
-function isStart(value: unknown): value is Start {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "x" in value &&
-    "y" in value &&
-    typeof (value as Start).x === "number" &&
-    typeof (value as Start).y === "number"
-  );
-}
-
-function isCommand(value: unknown): value is Command {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "direction" in value &&
-    "steps" in value &&
-    typeof (value as Command).direction === "string" &&
-    VALID_DIRECTIONS.includes((value as Command).direction as Direction) &&
-    typeof (value as Command).steps === "number"
-  );
-}
-
+/**
+ * Minimal guard: checks that start and commands exist.
+ * Per task spec, inputs are assumed well-formed, so no elaborate validation.
+ */
 function validateRequestBody(body: unknown): EnterPathRequestBody {
   if (typeof body !== "object" || body === null) {
     throw new ValidationError("Request body must be an object");
@@ -35,23 +14,15 @@ function validateRequestBody(body: unknown): EnterPathRequestBody {
 
   const obj = body as Record<string, unknown>;
 
-  if (!("start" in obj) || !isStart(obj.start)) {
-    throw new ValidationError("Invalid or missing 'start' (expected {x: number, y: number})");
+  if (!("start" in obj)) {
+    throw new ValidationError("Missing 'start'");
   }
 
   if (!("commands" in obj) || !Array.isArray(obj.commands)) {
-    throw new ValidationError("Invalid or missing 'commands' (expected array)");
+    throw new ValidationError("Missing or invalid 'commands'");
   }
 
-  for (let i = 0; i < obj.commands.length; i++) {
-    if (!isCommand(obj.commands[i])) {
-      throw new ValidationError(
-        `Invalid command at index ${i} (expected {direction: north|east|south|west, steps: number})`
-      );
-    }
-  }
-
-  return { start: obj.start as Start, commands: obj.commands as Command[] };
+  return obj as unknown as EnterPathRequestBody;
 }
 
 export function registerRoutes(app: Express, service: EnterPathService): void {

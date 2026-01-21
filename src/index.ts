@@ -7,7 +7,7 @@ import { createApp } from "./app";
 
 /**
  * Service entrypoint: loads env, wires dependencies, starts HTTP server.
- * Handles SIGINT/SIGTERM for a best-effort graceful shutdown (closes DB pool).
+ * Handles SIGINT/SIGTERM for graceful shutdown (closes HTTP server, then DB pool).
  */
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -19,12 +19,15 @@ async function main(): Promise<void> {
 
   const app = createApp({ logger, enterPathService });
 
-  app.listen(env.port, "0.0.0.0", () => {
+  const server = app.listen(env.port, "0.0.0.0", () => {
     logger.info({ msg: "server listening", port: env.port });
   });
 
   const shutdown = async () => {
     logger.info({ msg: "shutdown requested" });
+    server.close(() => {
+      logger.info({ msg: "http server closed" });
+    });
     await db.close();
     process.exit(0);
   };
