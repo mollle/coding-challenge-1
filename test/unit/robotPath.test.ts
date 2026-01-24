@@ -1,4 +1,4 @@
-import { countUniqueCleaned, decodePosition } from "../../src/domain/robotPath";
+import { countUniqueCleaned } from "../../src/domain/robotPath";
 import { Command } from "../../src/domain/types";
 
 describe("countUniqueCleaned", () => {
@@ -45,6 +45,7 @@ describe("countUniqueCleaned", () => {
     expect(countUniqueCleaned({ x: 0, y: 0 }, commands)).toBe(4);
   });
 
+
   it("handles 10000 commands with 1 step each", () => {
     const commands: Command[] = Array.from({ length: 10_000 }, () => ({
       direction: "east",
@@ -78,26 +79,38 @@ describe("countUniqueCleaned", () => {
       expect(countUniqueCleaned({ x: -100_000, y: -100_000 }, commands)).toBe(3);
     });
   });
-});
 
-describe("decodePosition", () => {
-  it("decodes origin correctly", () => {
-    const encoded = (0 + 100_000) * 200_001 + (0 + 100_000);
-    expect(decodePosition(encoded)).toEqual({ x: 0, y: 0 });
-  });
+  describe("intersection points (horizontal meets vertical)", () => {
+    it("counts single intersection point correctly (L-shape)", () => {
+      const commands: Command[] = [
+        { direction: "east", steps: 3 },
+        { direction: "north", steps: 2 },
+      ];
 
-  it("decodes max positive coordinates correctly", () => {
-    const encoded = (100_000 + 100_000) * 200_001 + (100_000 + 100_000);
-    expect(decodePosition(encoded)).toEqual({ x: 100_000, y: 100_000 });
-  });
+      expect(countUniqueCleaned({ x: 0, y: 0 }, commands)).toBe(6);
+    });
 
-  it("decodes max negative coordinates correctly", () => {
-    const encoded = (-100_000 + 100_000) * 200_001 + (-100_000 + 100_000);
-    expect(decodePosition(encoded)).toEqual({ x: -100_000, y: -100_000 });
-  });
+    it("counts multiple intersection points in a cross pattern", () => {
+      const commands: Command[] = [
+        { direction: "east", steps: 4 },
+        { direction: "west", steps: 2 },
+        { direction: "north", steps: 2 },
+        { direction: "south", steps: 4 },
+      ];
 
-  it("decodes mixed extreme coordinates correctly", () => {
-    const encoded = (100_000 + 100_000) * 200_001 + (-100_000 + 100_000);
-    expect(decodePosition(encoded)).toEqual({ x: -100_000, y: 100_000 });
+      expect(countUniqueCleaned({ x: 0, y: 0 }, commands)).toBe(9);
+    });
+
+    it("handles grid pattern with many intersections", () => {
+      const commands: Command[] = [
+        { direction: "north", steps: 2 },
+        { direction: "south", steps: 4 },
+        { direction: "north", steps: 2 },
+        { direction: "east", steps: 2 },
+        { direction: "west", steps: 4 },
+      ];
+
+      expect(countUniqueCleaned({ x: 0, y: 0 }, commands)).toBe(9);
+    });
   });
 });

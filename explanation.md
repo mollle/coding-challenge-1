@@ -282,61 +282,877 @@ execute: async (body) => {
 
 **Aufgabe**: Enthält die reine Geschäftslogik - KEIN I/O!
 
-**robotPath.ts** - Der Algorithmus
+**robotPath.ts** - Der Segment-Merging Algorithmus
+
+---
+
+### 🤖 Das Problem: Warum nicht einfach jeden Punkt zählen?
+
+```
+Stell dir vor, du zeichnest den Weg des Roboters auf Karopapier:
+
+    Start: (0,0)
+    Command: "east 5" (5 Schritte nach rechts)
+    
+    ·───·───·───·───·───·
+    0   1   2   3   4   5
+    
+    Das sind 6 Punkte (Start + 5 Schritte).
+```
+
+**Der naive Ansatz:**
 ```typescript
-// Koordinaten-Encoding Konstanten
-const OFFSET = 100_000;
-const MULTIPLIER = 2 * OFFSET + 1; // 200_001 — garantiert keine Kollisionen
+// Für jeden einzelnen Schritt einen Punkt speichern
+visited.add(0);  // Punkt bei x=0
+visited.add(1);  // Punkt bei x=1
+visited.add(2);  // Punkt bei x=2
+visited.add(3);  // Punkt bei x=3
+visited.add(4);  // Punkt bei x=4
+visited.add(5);  // Punkt bei x=5
+// → 6 Operationen für 5 Schritte
+```
 
-// Encodiert (x, y) zu einer eindeutigen Zahl für Set-Key
-function encodePosition(x: number, y: number): number {
-  return (y + OFFSET) * MULTIPLIER + (x + OFFSET);
+**Das Problem bei großen Inputs:**
+```
+Command: "east 100.000"
+→ 100.001 Punkte ins Set einfügen!
+
+10.000 solcher Commands?
+→ Potentiell 1.000.000.000 (1 Milliarde) Operationen!
+→ JavaScript Set crasht bei ~16.7 Millionen Einträgen
+→ "Set maximum size exceeded" 💥
+```
+
+---
+
+### 💡 Die Lösung: Speichere LINIEN statt PUNKTE
+
+```
+Statt 100.001 Punkte zu speichern...
+
+    ·───·───·───·───·─── ... ───·───·───·
+    0   1   2   3   4         99999  100000
+    
+    (100.001 einzelne Punkte 😰)
+
+...speichern wir nur EINE Linie:
+
+    ════════════════════════════════════════
+    "Horizontale Linie bei y=0, von x=0 bis x=100000"
+    
+    Gespeichert als: { y: 0, x1: 0, x2: 100000 }
+    
+    (1 Objekt statt 100.001 Punkte 🎉)
+```
+
+---
+
+### 📐 Der Algorithmus in 4 Schritten
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐        │
+│  │ 1. SAMMELN   │ ──▶ │ 2. MERGEN    │ ──▶ │ 3. ZÄHLEN    │        │
+│  │              │     │              │     │              │        │
+│  │ Bewegungen   │     │ Überlappende │     │ Punkte pro   │        │
+│  │ → Segmente   │     │ Intervalle   │     │ Segment      │        │
+│  │              │     │ vereinigen   │     │              │        │
+│  └──────────────┘     └──────────────┘     └──────────────┘        │
+│                                                   │                 │
+│                                                   ▼                 │
+│                                            ┌──────────────┐        │
+│                                            │ 4. KORREKTUR │        │
+│                                            │              │        │
+│                                            │ Schnittpunkte│        │
+│                                            │ abziehen     │        │
+│                                            └──────────────┘        │
+│                                                   │                 │
+│                                                   ▼                 │
+│                                              ERGEBNIS               │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Schritt 1: Bewegungen als Segmente speichern
+
+```
+Beispiel-Pfad:
+  Start: (1,1)
+  Commands: east 3, north 2, west 2, south 1
+
+Zeichnung:
+         
+    y     
+    3     
+          1───2───3───4      ← Horizontal: y=1, x geht von 1→4
+    2         │       │
+              │       │      ← Vertikal links:  x=4, y geht von 1→3
+    1     ····│·······│      ← Vertikal rechts: x=2, y geht von 2→3
+              │               
+    0     ────┼───────────▶ x
+          0   1   2   3   4
+
+Der Roboter bewegt sich:
+  1. east 3:  von (1,1) nach (4,1)  → Horizontal
+  2. north 2: von (4,1) nach (4,3)  → Vertikal  
+  3. west 2:  von (4,3) nach (2,3)  → Horizontal
+  4. south 1: von (2,3) nach (2,2)  → Vertikal
+```
+
+**Code:**
+```typescript
+// Nach jeder Bewegung: Segment speichern
+if (dy === 0) {
+  // Horizontal (y bleibt gleich, x ändert sich)
+  hSegments.push({ y: 1, x1: 1, x2: 4 });  // east 3
+  hSegments.push({ y: 3, x1: 2, x2: 4 });  // west 2
+} else {
+  // Vertikal (x bleibt gleich, y ändert sich)
+  vSegments.push({ x: 4, y1: 1, y2: 3 });  // north 2
+  vSegments.push({ x: 2, y1: 2, y2: 3 });  // south 1
 }
+```
 
-export function countUniqueCleaned(start: Start, commands: Command[]): number {
-  let x = start.x;
-  let y = start.y;
+**Gesammelte Segmente:**
+```
+Horizontal (──):          Vertikal (│):
+┌─────────────────┐       ┌─────────────────┐
+│ y=1: x von 1→4  │       │ x=4: y von 1→3  │
+│ y=3: x von 2→4  │       │ x=2: y von 2→3  │
+└─────────────────┘       └─────────────────┘
+```
 
-  // Set<number> statt Set<string> für ~4x weniger Speicher!
-  const visited = new Set<number>();
-  visited.add(encodePosition(x, y));  // Startpunkt zählt!
+---
 
-  for (const command of commands) {
-    const { dx, dy } = directionToVector(command.direction);
+### Schritt 2: Überlappende Intervalle mergen
 
-    // Jeden einzelnen Schritt durchlaufen!
-    for (let i = 0; i < command.steps; i += 1) {
-      x += dx;
-      y += dy;
-      visited.add(encodePosition(x, y));  // Set ignoriert Duplikate
+```
+Was wenn der Roboter zweimal über dieselbe Stelle läuft?
+
+Beispiel: Roboter geht hin und zurück auf y=5
+
+    Bewegung 1: east 10  →  Segment [0, 10]
+    Bewegung 2: west 5   →  Segment [5, 10] (zurück)
+    Bewegung 3: east 3   →  Segment [5, 8]  (wieder vor)
+
+Visualisierung der X-Intervalle bei y=5:
+
+    [0─────────────────10]     Segment 1: [0,10]
+              [5───────10]     Segment 2: [5,10]  
+              [5─────8]        Segment 3: [5,8] 
+    
+    Diese überlappen! Ohne Merging würden wir Punkte mehrfach zählen.
+
+Nach dem Merging:
+
+    [0─────────────────10]     Ein Intervall: [0,10]
+    
+    Punkte = 10 - 0 + 1 = 11 ✓
+```
+
+**Der Merge-Algorithmus visualisiert:**
+
+```
+Eingabe (unsortiert):     Nach Sortierung:       Nach Merging:
+                          
+[5,8]  [0,10]  [5,10]  →  [0,10] [5,8] [5,10]  →  [0,10]
+                          
+                          Prüfe: 5 ≤ 10? Ja! → Erweitern
+                          Prüfe: 5 ≤ 10? Ja! → Erweitern
+                          Fertig: [0, max(10,8,10)] = [0,10]
+```
+
+**Code:**
+```typescript
+function mergeIntervals(intervals) {
+  // 1. Sortieren nach Startpunkt
+  intervals.sort((a, b) => a.start - b.start);
+  
+  // 2. Durchlaufen und mergen
+  const merged = [];
+  let current = intervals[0];  // [0,10]
+  
+  for (const next of intervals.slice(1)) {
+    if (next.start <= current.end + 1) {
+      // Überlappen! → Erweitern
+      current.end = Math.max(current.end, next.end);
+    } else {
+      // Lücke! → Neues Intervall starten
+      merged.push(current);
+      current = next;
     }
   }
-
-  return visited.size;
+  merged.push(current);
+  
+  return merged;  // [[0,10]]
 }
 ```
 
-**Warum `Set<number>` statt `Set<string>`?**
-- ~4x weniger Speicherverbrauch als String-Keys
-- Schnelleres Hashing für Numbers vs. Strings
-- Set hat O(1) für Hinzufügen und Prüfen auf Existenz
-- Array hätte O(n) für `includes()`
+---
 
-**Warum Integer-Encoding statt String (`"x,y"`)?**
-- JavaScript Sets können keine Objekte effizient vergleichen
-- String-Keys (`"123456,789012"`) verbrauchen ~15+ Bytes pro Eintrag
-- Number-Keys verbrauchen nur 8 Bytes
-- Formel: `(y + OFFSET) * MULTIPLIER + (x + OFFSET)`
-- Max-Wert: 40.000.400.000 (sicher unter JavaScript's MAX_SAFE_INTEGER)
+### Schritt 3: Punkte zählen
 
-**Debugging-Hilfe: Position dekodieren**
+```
+Nach dem Merging haben wir saubere, nicht-überlappende Intervalle:
+
+Horizontale Segmente:              Vertikale Segmente:
+┌────────────────────────┐        ┌────────────────────────┐
+│ y=1: [1,4] → 4 Punkte  │        │ x=4: [1,3] → 3 Punkte  │
+│ y=3: [2,4] → 3 Punkte  │        │ x=2: [2,3] → 2 Punkte  │
+├────────────────────────┤        ├────────────────────────┤
+│ SUMME:      7 Punkte   │        │ SUMME:      5 Punkte   │
+└────────────────────────┘        └────────────────────────┘
+
+Formel für Punkte in Intervall [a,b]:
+Punkte = b - a + 1
+
+Beispiel: [1,4] → 4 - 1 + 1 = 4 Punkte (nämlich: 1, 2, 3, 4)
+```
+
+---
+
+### Schritt 4: Schnittpunkte abziehen ⚠️
+
+```
+PROBLEM: Manche Punkte liegen auf BEIDEN - horizontal UND vertikal!
+
+    y
+    3     ────●────        Punkt (4,3) liegt auf:
+              │            - Horizontaler Linie y=3
+    2         │            - Vertikaler Linie x=4
+              │            
+    1     ────┼────●       Punkt (4,1) liegt auf:
+              │            - Horizontaler Linie y=1  
+    0     ────┼──────▶ x   - Vertikaler Linie x=4
+              4
+
+Diese Punkte wurden DOPPELT gezählt!
+→ Einmal bei horizontalPoints
+→ Einmal bei verticalPoints
+
+Wir müssen sie wieder ABZIEHEN.
+```
+
+**Schnittpunkte finden:**
+```
+Für jede vertikale Linie (x=4, y von 1 bis 3):
+  Prüfe alle horizontalen Linien:
+  
+  │ Horizontale y=1, x=[1,4]: Ist 4 im Bereich [1,4]? JA → Schnitt bei (4,1)
+  │ Horizontale y=3, x=[2,4]: Ist 4 im Bereich [2,4]? JA → Schnitt bei (4,3)
+
+Für jede vertikale Linie (x=2, y von 2 bis 3):
+  Prüfe alle horizontalen Linien:
+  
+  │ Horizontale y=1, x=[1,4]: Ist 2 im Bereich? JA, aber y=1 ∉ [2,3] → KEIN Schnitt
+  │ Horizontale y=3, x=[2,4]: Ist 2 im Bereich [2,4]? JA → Schnitt bei (2,3)
+
+Gefundene Schnittpunkte: 3
+```
+
+---
+
+### 🧮 Finale Berechnung
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│   horizontalPoints  +  verticalPoints  -  intersections     │
+│                                                             │
+│         7           +        5         -        3           │
+│                                                             │
+│                         =  9 Punkte                         │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Kontrolle durch Abzählen im Bild:**
+```
+    y
+    3         2───3───4       Punkte: (2,3), (3,3), (4,3)
+              │       │
+    2         │       │       Punkte: (2,2), (4,2)
+              │       │
+    1     1───2───3───4       Punkte: (1,1), (2,1), (3,1), (4,1)
+    
+    Gezählt: 3 + 2 + 4 = 9 ✓
+```
+
+---
+
+### 🚀 Warum ist das so viel besser?
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                    VERGLEICH: NAIV vs. SMART                       │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  NAIVER ANSATZ (Set):                                              │
+│  ───────────────────                                               │
+│  Command "east 100.000"                                            │
+│  → 100.001 × visited.add()                                         │
+│  → 100.001 Einträge im Set                                         │
+│                                                                    │
+│  Bei 10.000 solcher Commands:                                      │
+│  → ~1.000.000.000 Einträge                                         │
+│  → 💥 CRASH (Set-Limit: ~16.7 Mio)                                 │
+│                                                                    │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  SMART (Segment-Merging):                                          │
+│  ────────────────────────                                          │
+│  Command "east 100.000"                                            │
+│  → 1 × hSegments.push()                                            │
+│  → 1 Segment gespeichert                                           │
+│                                                                    │
+│  Bei 10.000 solcher Commands:                                      │
+│  → 10.000 Segmente                                                 │
+│  → ✅ KEIN PROBLEM                                                 │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+
+Performance mit Heavy-Test (10.000 Commands, je ~100.000 Steps):
+
+  Set-basiert:        ❌ "Set maximum size exceeded"
+  Segment-Merging:    ✅ 993.737.501 Punkte in 1.6 Sekunden
+```
+
+---
+
+### 📝 Der komplette Algorithmus als Pseudocode
+
+```
+FUNKTION countUniqueCleaned(start, commands):
+    
+    hSegments = []  // Horizontale Segmente
+    vSegments = []  // Vertikale Segmente
+    position = start
+    
+    // SCHRITT 1: Segmente sammeln
+    FÜR JEDEN command IN commands:
+        neuPosition = position + (command.direction × command.steps)
+        
+        WENN horizontale Bewegung:
+            hSegments.add(y=position.y, x1=min, x2=max)
+        SONST:
+            vSegments.add(x=position.x, y1=min, y2=max)
+        
+        position = neuPosition
+    
+    // SCHRITT 2 & 3: Mergen und Zählen
+    horizontalPoints = 0
+    FÜR JEDES y MIT horizontalen Segmenten:
+        intervals = alle X-Intervalle bei diesem y
+        merged = mergeIntervals(intervals)
+        horizontalPoints += summe(interval.end - interval.start + 1)
+    
+    verticalPoints = 0
+    FÜR JEDES x MIT vertikalen Segmenten:
+        intervals = alle Y-Intervalle bei diesem x
+        merged = mergeIntervals(intervals)
+        verticalPoints += summe(interval.end - interval.start + 1)
+    
+    // SCHRITT 4: Schnittpunkte abziehen
+    intersections = 0
+    FÜR JEDE vertikale Linie (x, yIntervalle):
+        FÜR JEDE horizontale Linie (y, xIntervalle):
+            WENN x in xIntervallen UND y in yIntervallen:
+                intersections++
+    
+    RETURN horizontalPoints + verticalPoints - intersections
+```
+
+---
+
+### 🔍 Debugging-Walkthrough: Der Code Zeile für Zeile
+
+Hier gehen wir den **echten Code** mit einem konkreten Beispiel durch und zeigen nach jeder wichtigen Zeile den Speicherstand.
+
+**Beispiel-Input:**
 ```typescript
-export function decodePosition(encoded: number): { x: number; y: number } {
-  const yOffset = Math.floor(encoded / MULTIPLIER);
-  const xOffset = encoded % MULTIPLIER;
-  return { x: xOffset - OFFSET, y: yOffset - OFFSET };
+start = { x: 0, y: 0 }
+commands = [
+  { direction: "east",  steps: 3 },  // → nach (3,0)
+  { direction: "north", steps: 2 },  // → nach (3,2)
+  { direction: "west",  steps: 2 },  // → nach (1,2)
+  { direction: "south", steps: 1 },  // → nach (1,1)
+]
+```
+
+**Erwarteter Pfad:**
+```
+    y
+    2     1───2───3      
+          │       │      
+    1     ·       │      
+                  │      
+    0     0───1───2───3 → x
+```
+
+---
+
+#### Phase 1: Initialisierung
+
+```typescript
+export function countUniqueCleaned(start: Start, commands: Command[]): number {
+  if (commands.length === 0) {
+    return 1;
+  }
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ commands.length = 4  →  Kein early return, weiter geht's   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```typescript
+  const horizontalSegments: HorizontalSegment[] = [];
+  const verticalSegments: VerticalSegment[] = [];
+
+  let currentX = start.x;
+  let currentY = start.y;
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ SPEICHER nach Initialisierung:                              │
+├─────────────────────────────────────────────────────────────┤
+│ horizontalSegments = []                                     │
+│ verticalSegments   = []                                     │
+│ currentX = 0                                                │
+│ currentY = 0                                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Phase 2: Segmente sammeln (Loop über Commands)
+
+**Command 1: `{ direction: "east", steps: 3 }`**
+
+```typescript
+  for (const command of commands) {
+    const { dx, dy } = directionToVector(command.direction);
+    const destinationX = currentX + dx * command.steps;
+    const destinationY = currentY + dy * command.steps;
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ command = { direction: "east", steps: 3 }                   │
+│ dx = 1, dy = 0  (east = nach rechts)                        │
+│ destinationX = 0 + 1 * 3 = 3                                │
+│ destinationY = 0 + 0 * 3 = 0                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```typescript
+    if (dy === 0) {
+      // Horizontal movement (y stays constant, x changes)
+      horizontalSegments.push({
+        yCoordinate: currentY,
+        xStart: Math.min(currentX, destinationX),
+        xEnd: Math.max(currentX, destinationX),
+      });
+    }
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ dy === 0? JA → Horizontale Bewegung                         │
+│                                                             │
+│ horizontalSegments.push({                                   │
+│   yCoordinate: 0,                                           │
+│   xStart: min(0, 3) = 0,                                    │
+│   xEnd: max(0, 3) = 3                                       │
+│ })                                                          │
+├─────────────────────────────────────────────────────────────┤
+│ SPEICHER:                                                   │
+│ horizontalSegments = [                                      │
+│   { yCoordinate: 0, xStart: 0, xEnd: 3 }  ← NEU            │
+│ ]                                                           │
+│ verticalSegments = []                                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```typescript
+    currentX = destinationX;
+    currentY = destinationY;
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ currentX = 3                                                │
+│ currentY = 0                                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+**Command 2: `{ direction: "north", steps: 2 }`**
+
+```typescript
+    const { dx, dy } = directionToVector(command.direction);
+    const destinationX = currentX + dx * command.steps;
+    const destinationY = currentY + dy * command.steps;
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ command = { direction: "north", steps: 2 }                  │
+│ dx = 0, dy = 1  (north = nach oben)                         │
+│ destinationX = 3 + 0 * 2 = 3                                │
+│ destinationY = 0 + 1 * 2 = 2                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```typescript
+    } else {
+      // Vertical movement (x stays constant, y changes)
+      verticalSegments.push({
+        xCoordinate: currentX,
+        yStart: Math.min(currentY, destinationY),
+        yEnd: Math.max(currentY, destinationY),
+      });
+    }
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ dy === 0? NEIN → Vertikale Bewegung                         │
+│                                                             │
+│ verticalSegments.push({                                     │
+│   xCoordinate: 3,                                           │
+│   yStart: min(0, 2) = 0,                                    │
+│   yEnd: max(0, 2) = 2                                       │
+│ })                                                          │
+├─────────────────────────────────────────────────────────────┤
+│ SPEICHER:                                                   │
+│ horizontalSegments = [                                      │
+│   { yCoordinate: 0, xStart: 0, xEnd: 3 }                   │
+│ ]                                                           │
+│ verticalSegments = [                                        │
+│   { xCoordinate: 3, yStart: 0, yEnd: 2 }  ← NEU            │
+│ ]                                                           │
+│ currentX = 3, currentY = 2                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+**Command 3: `{ direction: "west", steps: 2 }`**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ command = { direction: "west", steps: 2 }                   │
+│ dx = -1, dy = 0  (west = nach links)                        │
+│ destinationX = 3 + (-1) * 2 = 1                             │
+│ destinationY = 2 + 0 * 2 = 2                                │
+│                                                             │
+│ dy === 0? JA → Horizontale Bewegung                         │
+├─────────────────────────────────────────────────────────────┤
+│ SPEICHER:                                                   │
+│ horizontalSegments = [                                      │
+│   { yCoordinate: 0, xStart: 0, xEnd: 3 },                  │
+│   { yCoordinate: 2, xStart: 1, xEnd: 3 }  ← NEU            │
+│ ]                                                           │
+│ verticalSegments = [                                        │
+│   { xCoordinate: 3, yStart: 0, yEnd: 2 }                   │
+│ ]                                                           │
+│ currentX = 1, currentY = 2                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+**Command 4: `{ direction: "south", steps: 1 }`**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ command = { direction: "south", steps: 1 }                  │
+│ dx = 0, dy = -1  (south = nach unten)                       │
+│ destinationX = 1 + 0 * 1 = 1                                │
+│ destinationY = 2 + (-1) * 1 = 1                             │
+│                                                             │
+│ dy === 0? NEIN → Vertikale Bewegung                         │
+├─────────────────────────────────────────────────────────────┤
+│ SPEICHER nach allen 4 Commands:                             │
+│                                                             │
+│ horizontalSegments = [                                      │
+│   { yCoordinate: 0, xStart: 0, xEnd: 3 },                  │
+│   { yCoordinate: 2, xStart: 1, xEnd: 3 }                   │
+│ ]                                                           │
+│ verticalSegments = [                                        │
+│   { xCoordinate: 3, yStart: 0, yEnd: 2 },                  │
+│   { xCoordinate: 1, yStart: 1, yEnd: 2 }  ← NEU            │
+│ ]                                                           │
+│ currentX = 1, currentY = 1                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Phase 3: Horizontale Segmente gruppieren und mergen
+
+```typescript
+  const horizontalSegmentsByY = new Map<number, Interval[]>();
+  for (const segment of horizontalSegments) {
+    if (!horizontalSegmentsByY.has(segment.yCoordinate)) {
+      horizontalSegmentsByY.set(segment.yCoordinate, []);
+    }
+    horizontalSegmentsByY.get(segment.yCoordinate)!.push({
+      start: segment.xStart,
+      end: segment.xEnd,
+    });
+  }
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Gruppiere horizontale Segmente nach Y-Koordinate:           │
+│                                                             │
+│ horizontalSegmentsByY = Map {                               │
+│   0 → [ { start: 0, end: 3 } ],    // Linie bei y=0        │
+│   2 → [ { start: 1, end: 3 } ]     // Linie bei y=2        │
+│ }                                                           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```typescript
+  let totalHorizontalPoints = 0;
+  const mergedHorizontalIntervalsByY = new Map<number, Interval[]>();
+
+  for (const [yCoordinate, xIntervals] of horizontalSegmentsByY) {
+    const mergedXIntervals = mergeOverlappingIntervals(xIntervals);
+    mergedHorizontalIntervalsByY.set(yCoordinate, mergedXIntervals);
+    totalHorizontalPoints += countPointsInIntervals(mergedXIntervals);
+  }
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Iteration 1: yCoordinate = 0                                │
+│   xIntervals = [ { start: 0, end: 3 } ]                     │
+│   mergedXIntervals = [ { start: 0, end: 3 } ]  (keine Überlappung)
+│   Punkte: 3 - 0 + 1 = 4                                     │
+│   totalHorizontalPoints = 0 + 4 = 4                         │
+├─────────────────────────────────────────────────────────────┤
+│ Iteration 2: yCoordinate = 2                                │
+│   xIntervals = [ { start: 1, end: 3 } ]                     │
+│   mergedXIntervals = [ { start: 1, end: 3 } ]  (keine Überlappung)
+│   Punkte: 3 - 1 + 1 = 3                                     │
+│   totalHorizontalPoints = 4 + 3 = 7                         │
+├─────────────────────────────────────────────────────────────┤
+│ SPEICHER:                                                   │
+│ mergedHorizontalIntervalsByY = Map {                        │
+│   0 → [ { start: 0, end: 3 } ],                            │
+│   2 → [ { start: 1, end: 3 } ]                             │
+│ }                                                           │
+│ totalHorizontalPoints = 7                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Phase 4: Vertikale Segmente gruppieren und mergen
+
+```typescript
+  const verticalSegmentsByX = new Map<number, Interval[]>();
+  // ... (analog zu horizontal)
+
+  let totalVerticalPoints = 0;
+  const mergedVerticalIntervalsByX = new Map<number, Interval[]>();
+  // ... (analog zu horizontal)
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Gruppiere vertikale Segmente nach X-Koordinate:             │
+│                                                             │
+│ verticalSegmentsByX = Map {                                 │
+│   3 → [ { start: 0, end: 2 } ],    // Linie bei x=3        │
+│   1 → [ { start: 1, end: 2 } ]     // Linie bei x=1        │
+│ }                                                           │
+├─────────────────────────────────────────────────────────────┤
+│ Nach Merging und Zählen:                                    │
+│                                                             │
+│ mergedVerticalIntervalsByX = Map {                          │
+│   3 → [ { start: 0, end: 2 } ],  // Punkte: 2-0+1 = 3      │
+│   1 → [ { start: 1, end: 2 } ]   // Punkte: 2-1+1 = 2      │
+│ }                                                           │
+│ totalVerticalPoints = 3 + 2 = 5                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Phase 5: Schnittpunkte finden mit Binary Search
+
+```typescript
+  let intersectionCount = 0;
+
+  const sortedYCoordinatesWithHorizontalSegments = Array.from(
+    mergedHorizontalIntervalsByY.keys()
+  ).sort((a, b) => a - b);
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ sortedYCoordinatesWithHorizontalSegments = [0, 2]           │
+│ (sortiert, für Binary Search)                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```typescript
+  for (const [verticalLineX, verticalYIntervals] of mergedVerticalIntervalsByX) {
+    for (const verticalYInterval of verticalYIntervals) {
+      // Binary search für ersten Y-Wert >= verticalYInterval.start
+      let searchLow = 0;
+      let searchHigh = sortedYCoordinatesWithHorizontalSegments.length;
+
+      while (searchLow < searchHigh) {
+        const searchMid = (searchLow + searchHigh) >>> 1;
+        if (sortedYCoordinatesWithHorizontalSegments[searchMid] < verticalYInterval.start) {
+          searchLow = searchMid + 1;
+        } else {
+          searchHigh = searchMid;
+        }
+      }
+```
+
+**Vertikale Linie 1: x=3, y=[0,2]**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ verticalLineX = 3                                           │
+│ verticalYInterval = { start: 0, end: 2 }                    │
+│                                                             │
+│ Binary Search für y >= 0:                                   │
+│   sortedY = [0, 2]                                          │
+│   searchLow=0, searchHigh=2                                 │
+│   mid=1: sortedY[1]=2 >= 0? JA → searchHigh=1              │
+│   mid=0: sortedY[0]=0 >= 0? JA → searchHigh=0              │
+│   Ergebnis: searchLow = 0 (Index des ersten y >= 0)         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```typescript
+      for (
+        let yIndex = searchLow;
+        yIndex < sortedYCoordinatesWithHorizontalSegments.length &&
+        sortedYCoordinatesWithHorizontalSegments[yIndex] <= verticalYInterval.end;
+        yIndex++
+      ) {
+        const horizontalLineY = sortedYCoordinatesWithHorizontalSegments[yIndex];
+        const horizontalXIntervals = mergedHorizontalIntervalsByY.get(horizontalLineY)!;
+
+        for (const horizontalXInterval of horizontalXIntervals) {
+          if (verticalLineX >= horizontalXInterval.start && 
+              verticalLineX <= horizontalXInterval.end) {
+            intersectionCount++;
+            break;
+          }
+        }
+      }
+```
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Prüfe Y-Koordinaten von Index 0 bis Ende (solange y <= 2):  │
+│                                                             │
+│ yIndex=0: horizontalLineY = 0                               │
+│   horizontalXIntervals = [ { start: 0, end: 3 } ]           │
+│   Ist verticalLineX=3 in [0,3]? 3 >= 0 && 3 <= 3 → JA!     │
+│   intersectionCount++ → intersectionCount = 1               │
+│   Schnittpunkt gefunden: (3, 0) ✓                           │
+│                                                             │
+│ yIndex=1: horizontalLineY = 2                               │
+│   horizontalXIntervals = [ { start: 1, end: 3 } ]           │
+│   Ist verticalLineX=3 in [1,3]? 3 >= 1 && 3 <= 3 → JA!     │
+│   intersectionCount++ → intersectionCount = 2               │
+│   Schnittpunkt gefunden: (3, 2) ✓                           │
+│                                                             │
+│ yIndex=2: sortedY[2] existiert nicht → Loop beendet         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Vertikale Linie 2: x=1, y=[1,2]**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ verticalLineX = 1                                           │
+│ verticalYInterval = { start: 1, end: 2 }                    │
+│                                                             │
+│ Binary Search für y >= 1:                                   │
+│   sortedY = [0, 2]                                          │
+│   searchLow=0, searchHigh=2                                 │
+│   mid=1: sortedY[1]=2 >= 1? JA → searchHigh=1              │
+│   mid=0: sortedY[0]=0 >= 1? NEIN → searchLow=1             │
+│   Ergebnis: searchLow = 1 (überspringe y=0, da y=0 < 1)     │
+│                                                             │
+│ yIndex=1: horizontalLineY = 2                               │
+│   horizontalXIntervals = [ { start: 1, end: 3 } ]           │
+│   Ist verticalLineX=1 in [1,3]? 1 >= 1 && 1 <= 3 → JA!     │
+│   intersectionCount++ → intersectionCount = 3               │
+│   Schnittpunkt gefunden: (1, 2) ✓                           │
+│                                                             │
+│ yIndex=2: existiert nicht → Loop beendet                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ SPEICHER nach Schnittpunkt-Berechnung:                      │
+│                                                             │
+│ intersectionCount = 3                                       │
+│                                                             │
+│ Gefundene Schnittpunkte:                                    │
+│   (3, 0) - Kreuzung von H[y=0] und V[x=3]                  │
+│   (3, 2) - Kreuzung von H[y=2] und V[x=3]                  │
+│   (1, 2) - Kreuzung von H[y=2] und V[x=1]                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Phase 6: Finale Berechnung
+
+```typescript
+  return totalHorizontalPoints + totalVerticalPoints - intersectionCount;
 }
 ```
+```
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│   FINALE BERECHNUNG                                         │
+│   ══════════════════                                        │
+│                                                             │
+│   totalHorizontalPoints  =  7                               │
+│   totalVerticalPoints    =  5                               │
+│   intersectionCount      =  3                               │
+│                                                             │
+│   ─────────────────────────────                             │
+│   return 7 + 5 - 3 = 9                                      │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Visuelle Verifikation
+
+```
+    y
+    2     (1,2)───(2,2)───(3,2)      3 Punkte bei y=2
+          │               │      
+    1     (1,1)           │          1 Punkt (nicht auf H-Linie!)
+                          │      
+    0     (0,0)───(1,0)───(2,0)───(3,0)    4 Punkte bei y=0
+    
+          0       1       2       3    x
+
+Manuelles Abzählen aller einzigartigen Punkte:
+  y=0: (0,0), (1,0), (2,0), (3,0)           = 4 Punkte
+  y=1: (1,1)                                 = 1 Punkt
+  y=2: (1,2), (2,2), (3,2)                  = 3 Punkte
+  Vertikal extra: (3,1) fehlt!              = 1 Punkt
+                                            ─────────
+                                    TOTAL   = 9 Punkte ✓
+```
+
+---
 
 **direction.ts** - Lookup-Tabelle
 ```typescript
@@ -1345,8 +2161,16 @@ it("returns 201 and the execution record shape", async () => {
 
 ### Code-Entscheidungen
 
-**F: Warum `Set<number>` mit Integer-Encoding statt `Set<string>`?**
-> A: "Ich verwende Set<number> mit Integer-Encoding für ~4x weniger Speicherverbrauch. String-Keys wie '123456,789012' brauchen ~15+ Bytes pro Eintrag, während Numbers nur 8 Bytes brauchen. Bei bis zu einer Milliarde möglichen Positionen macht das einen riesigen Unterschied. Die Formel `(y + OFFSET) * MULTIPLIER + (x + OFFSET)` garantiert eindeutige Keys ohne Kollisionen. Set hat weiterhin O(1) für add und has."
+**F: Erkläre deinen Algorithmus für die Punktzählung.**
+> A: "Ich verwende einen Segment-Merging Ansatz. Statt jeden einzelnen Schritt zu speichern (was bei 10.000 Commands × 100.000 Steps = 1 Milliarde Operationen wäre), speichere ich nur die Liniensegmente. Horizontale Bewegungen werden als (y, x1, x2) gespeichert, vertikale als (x, y1, y2). 
+>
+> Dann merge ich überlappende Intervalle pro Zeile/Spalte und zähle die Punkte. Am Ende subtrahiere ich Schnittpunkte, die sonst doppelt gezählt würden. Das reduziert den Speicherbedarf von O(Punkte) auf O(Commands) und umgeht das JavaScript Set-Limit von ~16.7 Millionen."
+
+**F: Warum nicht einfach ein Set für jeden Punkt?**
+> A: "Das war mein erster Ansatz. Funktioniert super für kleine Inputs. Aber JavaScript Sets haben ein Limit von ~16.7 Millionen Einträgen. Bei der Heavy-Test-Datei mit 10.000 Commands und je ~100.000 Steps crasht das mit 'Set maximum size exceeded'. Der Segment-Ansatz löst das elegant."
+
+**F: Wie funktioniert das Intervall-Merging?**
+> A: "Ich sortiere alle Intervalle nach Startpunkt. Dann iteriere ich durch und prüfe: Überlappt das aktuelle Intervall mit dem nächsten? Wenn ja, erweitere ich es. Wenn nein, schließe ich das aktuelle ab und starte ein neues. Am Ende habe ich nicht-überlappende Intervalle und kann die Punkte einfach zählen: `end - start + 1`."
 
 **F: Warum keine Input-Validierung?**
 > A: "Die Spezifikation sagt: 'All input is considered well-formed.' Trotzdem prüfe ich die Grundstruktur (Typen, Pflichtfelder) mit einer `validateRequestBody` Funktion. Das verhindert Crashes bei komplett kaputtem Input. Range-Checks (z.B. ob x zwischen -100.000 und 100.000 liegt) mache ich nicht, da die Spec das nicht fordert."
@@ -1384,36 +2208,127 @@ it("returns 201 and the execution record shape", async () => {
 
 ### 11.1 Algorithmus-Alternativen
 
-**Aktuell: Set<number> mit Integer-Encoding (implementiert)**
+**Aktuell implementiert: Segment-Merging mit Sweep-Line**
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    IMPLEMENTIERTER ANSATZ                      │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│   Statt jeden Punkt zu speichern, speichern wir SEGMENTE:      │
+│                                                                │
+│   Bewegung east 100.000 Steps:                                 │
+│   ❌ Naiv:   100.000 × visited.add(...)                        │
+│   ✅ Smart:  1 × hSegments.push({ y, x1, x2 })                 │
+│                                                                │
+│   Speicher: O(Commands) statt O(Punkte)                        │
+│   Kein Set-Limit Problem!                                      │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**Kernformel:**
+```typescript
+result = horizontalPoints + verticalPoints - intersections
+```
+
+| Komponente | Bedeutung |
+|------------|-----------|
+| `horizontalPoints` | Alle Punkte auf horizontalen Segmenten (nach Merging) |
+| `verticalPoints` | Alle Punkte auf vertikalen Segmenten (nach Merging) |
+| `intersections` | Punkte die auf BEIDEN liegen (wurden doppelt gezählt) |
+
+**Warum funktioniert das?**
+- Roboter bewegt sich nur horizontal ODER vertikal (nie diagonal)
+- Jeder besuchte Punkt liegt auf mindestens einem Segment
+- Punkte auf Kreuzungen liegen auf genau zwei Segmenten
+
+**Performance-Ergebnis:**
+```
+Heavy-Test (10.000 Commands, ~1 Mrd. potentielle Punkte):
+- Set-basiert:        ❌ "Set maximum size exceeded" Crash
+- Segment-Merging:    ✅ 993.737.501 Punkte in ~1.6 Sekunden
+```
+
+---
+
+**Alternative 1: Set<number> mit Integer-Encoding (einfacher, aber limitiert)**
 ```typescript
 const OFFSET = 100_000;
-const MULTIPLIER = 2 * OFFSET + 1; // 200_001
-const key = (y + OFFSET) * MULTIPLIER + (x + OFFSET);
-visited.add(key);
-```
-- Pro: ~4x weniger Speicher als Strings, schnelleres Hashing
-- Pro: Max-Wert 40 Mrd. ist sicher unter MAX_SAFE_INTEGER
-- Contra: Formel muss man verstehen (aber: `decodePosition` Hilfsfunktion existiert)
+const MULTIPLIER = 2 * OFFSET + 1;
 
-**Alternative 1: Set<string>**
+function encodePosition(x: number, y: number): number {
+  return (y + OFFSET) * MULTIPLIER + (x + OFFSET);
+}
+
+// Jeden Schritt einzeln tracken
+for (let i = 0; i < command.steps; i++) {
+  x += dx;
+  y += dy;
+  visited.add(encodePosition(x, y));
+}
+return visited.size;
+```
+
+| Pro | Contra |
+|-----|--------|
+| Einfach zu verstehen | Set-Limit: ~16.7 Mio Einträge |
+| ~4x weniger Speicher als Strings | Crasht bei Heavy-Inputs |
+| O(1) add/has | O(Steps) Zeitkomplexität |
+
+---
+
+**Alternative 2: Set<string> (am einfachsten, aber ineffizient)**
 ```typescript
 visited.add(`${x},${y}`);
+return visited.size;
 ```
-- Pro: Sofort lesbar, keine Mathe nötig
-- Contra: ~4x mehr Speicher, langsameres String-Hashing
-- Contra: Bei extremen Inputs kann Speicher knapp werden
 
-**Alternative 2: Map<number, Set<number>>**
+| Pro | Contra |
+|-----|--------|
+| Sofort lesbar | ~4x mehr Speicher |
+| Keine Mathe nötig | Langsameres String-Hashing |
+| | Set-Limit bleibt Problem |
+
+---
+
+**Alternative 3: Sharded Sets (Kompromiss)**
 ```typescript
-// Nested Structure: x → Set von y-Werten
-const visited = new Map<number, Set<number>>();
-if (!visited.has(x)) visited.set(x, new Set());
-visited.get(x)!.add(y);
-```
-- Pro: Kein Encoding nötig
-- Contra: Komplexerer Code, mehr Objekt-Allokationen
+// 64 Sets: 64 × 16.7M ≈ 1 Mrd. Kapazität
+const SHARD_COUNT = 64;
+const shards: Set<number>[] = Array.from({ length: SHARD_COUNT }, () => new Set());
 
-**Meine Entscheidung**: `Set<number>` mit Integer-Encoding bietet die beste Balance aus Speichereffizienz und Lesbarkeit. Die `decodePosition` Hilfsfunktion macht Debugging einfach.
+function getShardIndex(x: number, y: number): number {
+  return ((x % 8) + 8) % 8 * 8 + ((y % 8) + 8) % 8;
+}
+
+// Hinzufügen
+shards[getShardIndex(x, y)].add(encodePosition(x, y));
+
+// Zählen
+return shards.reduce((sum, shard) => sum + shard.size, 0);
+```
+
+| Pro | Contra |
+|-----|--------|
+| Konzeptionell einfach | Immer noch O(Punkte) Speicher |
+| "Teile und herrsche" | Tuning der Shard-Anzahl nötig |
+| Umgeht Set-Limit | Langsamer als Segment-Merging |
+
+---
+
+**Entscheidungsmatrix:**
+
+```
+                    Einfachheit    Speicher    Max. Punkte    Performance
+                    ──────────    ────────    ───────────    ───────────
+Set<string>            ★★★★★         ★☆☆☆☆      ~16.7 Mio       ★★☆☆☆
+Set<number>            ★★★★☆         ★★★☆☆      ~16.7 Mio       ★★★☆☆
+Sharded Sets           ★★★☆☆         ★★☆☆☆      ~1 Mrd.         ★★★☆☆
+Segment-Merging        ★★☆☆☆         ★★★★★      Unbegrenzt      ★★★★★
+                                                    ↑
+                                              IMPLEMENTIERT
+```
 
 ### 11.2 Architektur-Alternativen
 
