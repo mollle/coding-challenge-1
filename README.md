@@ -10,8 +10,8 @@ Node.js + TypeScript + Express microservice that simulates a robot moving on a g
 - [Quick start (Docker)](#quick-start-docker)
 - [Troubleshooting](#troubleshooting)
 - [API](#api)
+- [Algorithm](#algorithm)
 - [Assumptions](#assumptions)
-- [Implementation Limits](#implementation-limits)
 - [Configuration](#configuration)
 - [Observability](#observability)
 - [Operations](#operations)
@@ -151,6 +151,17 @@ All error responses are JSON with shape `{ "error": "..." }`.
 - `503 Service Unavailable`: database unavailable
 - `500 Internal Server Error`: unexpected server error
 
+## Algorithm
+
+The path computation uses a segment-merging approach for efficiency:
+
+1. Convert movement commands into horizontal segments (fixed y) and vertical segments (fixed x)
+2. Group segments by their fixed coordinate and merge overlapping intervals
+3. Count points in merged intervals: each interval [a, b] contributes (b − a + 1) points
+4. Subtract intersection points where horizontal and vertical segments cross (to avoid double-counting)
+
+See [src/domain/robotPath.ts](src/domain/robotPath.ts) for implementation details.
+
 ## Assumptions
 
 - Input is expected to be well-formed; the service performs only minimal shape/type checks.
@@ -158,31 +169,6 @@ All error responses are JSON with shape `{ "error": "..." }`.
 - No more than 10,000 commands per request.
 - No more than 99,999 steps per command.
 - The robot is never instructed to move outside the office bounds.
-- Typical office scenarios are assumed; adversarial inputs designed to maximize unique positions (up to ~1 billion) would exceed available memory.
-
-## Implementation Limits
-
-This implementation uses a `Set<number>` to track visited positions. Each coordinate
-pair is encoded as a single number for memory efficiency.
-
-### Memory Constraints (512 MB container)
-
-When the container is limited to 512 MB, Node/V8 will typically cap the JavaScript heap well below that (cgroup-aware). In a quick probe inside `node:20-alpine` with `--memory=512m`, the V8 heap limit was ~259 MiB.
-
-### Real-World Scale (1 step = 1 cm)
-
-The task models the office as a grid of vertices, so “cleaned” is a count of unique vertices (points). If we additionally assume the distance between adjacent vertices is 1 cm, then each step corresponds to 1 cm of path length.
-
-| Metric | Value |
-|--------|-------|
-| Max unique vertices before OOM (measured, 512 MB container) | ~8,000,000 |
-| Max path length through new territory (worst-case, no revisits) | ~80 km |
-
-### Worst-Case Input
-
-The theoretical maximum (10,000 commands × 99,999 steps = ~1 billion positions) would require tens of GB of RAM. This implementation handles typical office scenarios but will run out of memory on adversarial inputs designed to maximize unique positions.
-
-For production use with extreme inputs, a segment-based algorithm would be needed.
 
 ## Configuration
 

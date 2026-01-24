@@ -2,7 +2,6 @@ import request from "supertest";
 import { createLogger } from "../../src/logging/logger";
 import { createApp } from "../../src/app";
 import { EnterPathService } from "../../src/application/enterPathService";
-import { ExecutionRecord } from "../../src/domain/types";
 import { DatabaseError } from "../../src/http/errorHandler";
 
 function createTestApp(fakeService?: EnterPathService) {
