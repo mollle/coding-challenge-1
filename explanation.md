@@ -2649,25 +2649,177 @@ Die drei Säulen:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Warum Pino statt console.log?
+
+In der Produktion ist `console.log` ein Anti-Pattern. Hier der direkte Vergleich:
+
+**console.log (❌ für Produktion ungeeignet)**
+```typescript
+// Unstrukturiert, schwer zu parsen
+console.log("Server started on port 5000");
+console.log("Request received:", req.method, req.path);
+console.log("Error:", err.message);
+
+// Ausgabe:
+// Server started on port 5000
+// Request received: POST /tibber-developer-test/enter-path
+// Error: Connection refused
+```
+
+**Pino (✅ production-ready)**
+```typescript
+// Strukturiertes JSON, maschinenlesbar
+logger.info({ port: 5000 }, "server listening");
+logger.info({ method: "POST", path: "/enter-path" }, "request received");
+logger.error({ err }, "request failed");
+
+// Ausgabe:
+// {"level":30,"time":"2026-01-24T21:27:24.263Z","port":5000,"msg":"server listening"}
+// {"level":30,"time":"2026-01-24T21:27:24.500Z","method":"POST","path":"/enter-path","msg":"request received"}
+// {"level":50,"time":"2026-01-24T21:27:24.600Z","err":{"message":"Connection refused","stack":"..."},"msg":"request failed"}
+```
+
+**Vergleich im Detail:**
+
+| Aspekt | console.log | Pino |
+|--------|-------------|------|
+| **Format** | Unstrukturierter Text | JSON (maschinenlesbar) |
+| **Performance** | Synchron, blockiert Event Loop | Asynchron, ~5x schneller |
+| **Log Levels** | Keine (alles gleich) | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
+| **Timestamps** | Manuell hinzufügen | Automatisch (ISO 8601) |
+| **Filtering** | Nicht möglich | Nach Level filtern (z.B. nur `warn`+) |
+| **Parsing** | Regex-Hacks nötig | `jq`, Elasticsearch, CloudWatch nativ |
+| **Context** | Manuell formatieren | Objekte direkt übergeben |
+| **Produktion** | ❌ Niemals | ✅ Standard |
+
+**Warum JSON-Logging wichtig ist:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Log Aggregation Pipeline                  │
+│                                                              │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────┐  │
+│  │   App       │───▶│  Filebeat/  │───▶│  Elasticsearch  │  │
+│  │ (JSON Logs) │    │  Fluentd    │    │  / CloudWatch   │  │
+│  └─────────────┘    └─────────────┘    └────────┬────────┘  │
+│                                                  │           │
+│                                         ┌────────▼────────┐ │
+│                                         │     Kibana /    │ │
+│                                         │ CloudWatch Logs │ │
+│                                         │   Insights      │ │
+│                                         └─────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Mit JSON kannst du in Kibana/CloudWatch Logs Insights queries wie diese machen:
+```sql
+-- Finde alle Requests langsamer als 100ms
+fields @timestamp, requestId, durationMs
+| filter durationMs > 100
+| sort durationMs desc
+
+-- Zähle Fehler nach Status Code
+fields statusCode
+| filter statusCode >= 400
+| stats count(*) by statusCode
+```
+
+Mit `console.log`-Text wäre das nur mit fragilen Regex-Patterns möglich.
+
+---
+
 ### Was existiert bereits im Projekt?
 
-**1. Logging (✓ vorhanden)**
+**1. Logging mit Pino (✓ vorhanden)**
+
 ```typescript
 // src/logging/logger.ts
 import pino from "pino";
 export function createLogger(env) {
   return pino({
-    level: env.logLevel,
-    timestamp: pino.stdTimeFunctions.isoTime,
+    level: env.logLevel,        // Filtert nach Level (z.B. nur 'warn' und höher)
+    base: undefined,            // Keine automatischen Felder (pid, hostname)
+    timestamp: pino.stdTimeFunctions.isoTime,  // ISO 8601 Format
   });
 }
-
-// Verwendung:
-logger.info({ msg: "server listening", port: env.port });
-logger.error({ msg: "request failed", err: { message, stack } });
 ```
 
-**2. Health Check (✓ vorhanden)**
+**2. Request Logging Middleware (✓ vorhanden)**
+
+```typescript
+// src/http/requestLogger.ts
+export function createRequestLogger(logger: Logger) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    // Request ID: Verwende Client-ID oder generiere neue
+    const requestId = req.get("X-Request-Id") || crypto.randomUUID();
+    const startTime = process.hrtime.bigint();
+
+    // Header für Client-Korrelation setzen
+    res.setHeader("X-Request-Id", requestId);
+
+    // Logge wenn Response fertig ist
+    res.on("finish", () => {
+      const durationMs = Math.round(Number(process.hrtime.bigint() - startTime) / 1e4) / 100;
+
+      const logData = {
+        requestId,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs,
+      };
+
+      // Log Level basierend auf Status Code
+      if (res.statusCode >= 500) {
+        logger.error(logData, "request completed");  // Server-Fehler
+      } else if (res.statusCode >= 400) {
+        logger.warn(logData, "request completed");   // Client-Fehler
+      } else {
+        logger.info(logData, "request completed");   // Erfolg
+      }
+    });
+
+    next();
+  };
+}
+```
+
+**Beispiel-Output:**
+```json
+{"level":30,"time":"2026-01-24T21:47:31.693Z","requestId":"c7b1d767-70a3-44ce-84d7-cecd8b1985a0","method":"POST","path":"/tibber-developer-test/enter-path","statusCode":201,"durationMs":122.38,"msg":"request completed"}
+```
+
+**Warum Request ID wichtig ist:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Request Correlation                      │
+│                                                              │
+│  Client sendet:                                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ POST /enter-path                                      │   │
+│  │ X-Request-Id: client-trace-abc-123                    │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                           │                                  │
+│                           ▼                                  │
+│  Server loggt:                                               │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ {"requestId":"client-trace-abc-123",...}              │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                           │                                  │
+│                           ▼                                  │
+│  Server antwortet:                                           │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ HTTP/1.1 201 Created                                  │   │
+│  │ X-Request-Id: client-trace-abc-123                    │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  → Client kann seine Request ID in Support-Tickets angeben  │
+│  → Ops kann in Logs nach genau diesem Request suchen        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**3. Health Check (✓ vorhanden)**
 ```typescript
 // src/http/routes.ts
 app.get("/health", (_req, res) => {
